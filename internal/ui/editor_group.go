@@ -1361,14 +1361,14 @@ func (g *EditorGroupWidget) OpenFileReadOnly(path, title string) {
 func (g *EditorGroupWidget) OpenBufferReadOnly(title, filePath string, lines []string) {
 	for i := range g.tabs {
 		if g.tabs[i].Title == title && g.tabs[i].ReadOnly {
-			g.tabs[i].Buf.Lines = lines
+			g.tabs[i].Buf.SetLines(lines)
 			g.SwitchTab(i)
 			return
 		}
 	}
 	newBuf := &buffer.Buffer{Lines: lines}
 	if len(lines) == 0 {
-		newBuf.Lines = []string{""}
+		newBuf.SetLines([]string{""})
 	}
 	tabSize := g.TabSize
 	detected := buffer.DetectIndent(newBuf.Lines)
