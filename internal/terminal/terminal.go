@@ -98,8 +98,10 @@ func New(shell string, cols, rows, scrollbackMax int, env []string, dir string) 
 		return nil, err
 	}
 
-	restoreChildHangup()
-	if err := cmd.Start(); err != nil {
+	restoreHangup := defaultHangupForChild()
+	err = cmd.Start()
+	restoreHangup()
+	if err != nil {
 		pt.Close()
 		return nil, err
 	}
@@ -262,15 +264,17 @@ func (t *Terminal) Close() {
 	t.cbMu.Unlock()
 
 	t.signalShell(sigHangup, started)
-	t.mu.Lock()
-	t.pt.Close()
-	t.mu.Unlock()
+	// Closing the pty while bash handles SIGHUP can make it exit without
+	// hanging up its jobs, so the pty stays open until the shell is gone.
 	if started {
 		select {
 		case <-t.waited:
 		case <-time.After(hangupGrace):
 		}
 	}
+	t.mu.Lock()
+	t.pt.Close()
+	t.mu.Unlock()
 	t.signalShell(sigKill, started)
 	if started {
 		<-t.waited
