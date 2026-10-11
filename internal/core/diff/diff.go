@@ -58,62 +58,51 @@ func FullDiffLines(oldLines, newLines []string) []DiffLine {
 }
 
 func FullDiffLinesContext(ctx context.Context, oldLines, newLines []string) ([]DiffLine, error) {
-	lcs, err := computeLCSContext(ctx, oldLines, newLines)
+	matchA, matchB, err := computeMatchesContext(ctx, oldLines, newLines)
 	if err != nil {
 		return nil, err
 	}
-	var lines []DiffLine
-	oi, ni, li := 0, 0, 0
-
-	for oi < len(oldLines) || ni < len(newLines) {
-		if li < len(lcs) && oi < len(oldLines) && ni < len(newLines) &&
-			oldLines[oi] == lcs[li] && newLines[ni] == lcs[li] {
-			lines = append(lines, DiffLine{
-				Left:  SideLine{Num: oi + 1, Text: oldLines[oi], Kind: Context},
-				Right: SideLine{Num: ni + 1, Text: newLines[ni], Kind: Context},
-			})
-			oi++
-			ni++
-			li++
-			continue
+	rows, prevA, prevB := len(matchA), 0, 0
+	for m := 0; m <= len(matchA); m++ {
+		endA, endB := len(oldLines), len(newLines)
+		if m < len(matchA) {
+			endA, endB = matchA[m], matchB[m]
 		}
-
-		var delBuf []int
-		var addBuf []int
-		for oi < len(oldLines) && (li >= len(lcs) || oldLines[oi] != lcs[li]) {
-			delBuf = append(delBuf, oi)
-			oi++
+		rows += max(endA-prevA, endB-prevB)
+		prevA, prevB = endA+1, endB+1
+	}
+	lines := make([]DiffLine, 0, rows)
+	oi, ni := 0, 0
+	for m := 0; m <= len(matchA); m++ {
+		oEnd, nEnd := len(oldLines), len(newLines)
+		if m < len(matchA) {
+			oEnd, nEnd = matchA[m], matchB[m]
 		}
-		for ni < len(newLines) && (li >= len(lcs) || newLines[ni] != lcs[li]) {
-			addBuf = append(addBuf, ni)
-			ni++
-		}
-
-		maxLen := len(delBuf)
-		if len(addBuf) > maxLen {
-			maxLen = len(addBuf)
-		}
-		for i := 0; i < maxLen; i++ {
-			dl := DiffLine{}
-			if i < len(delBuf) {
-				dl.Left = SideLine{Num: delBuf[i] + 1, Text: oldLines[delBuf[i]], Kind: Deleted}
-			} else {
-				dl.Left = SideLine{Kind: Blank}
+		for i := 0; oi+i < oEnd || ni+i < nEnd; i++ {
+			dl := DiffLine{Left: SideLine{Kind: Blank}, Right: SideLine{Kind: Blank}}
+			if oi+i < oEnd {
+				dl.Left = SideLine{Num: oi + i + 1, Text: oldLines[oi+i], Kind: Deleted}
 			}
-			if i < len(addBuf) {
-				dl.Right = SideLine{Num: addBuf[i] + 1, Text: newLines[addBuf[i]], Kind: Added}
-			} else {
-				dl.Right = SideLine{Kind: Blank}
+			if ni+i < nEnd {
+				dl.Right = SideLine{Num: ni + i + 1, Text: newLines[ni+i], Kind: Added}
 			}
 			lines = append(lines, dl)
 		}
+		if m == len(matchA) {
+			break
+		}
+		lines = append(lines, DiffLine{
+			Left:  SideLine{Num: oEnd + 1, Text: oldLines[oEnd], Kind: Context},
+			Right: SideLine{Num: nEnd + 1, Text: newLines[nEnd], Kind: Context},
+		})
+		oi, ni = oEnd+1, nEnd+1
 	}
 	return lines, nil
 }
 
 func Parse(unified string) FileDiff {
 	var fd FileDiff
-	lines := strings.Split(unified, "\n")
+	lines := strings.Split(strings.TrimSuffix(unified, "\n"), "\n")
 
 	var curHunk *Hunk
 	var delBuf []string
