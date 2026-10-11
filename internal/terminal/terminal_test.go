@@ -98,9 +98,11 @@ func TestCloseKillsProcessAndStopsReadLoop(t *testing.T) {
 		t.Fatal("Close() did not return — readLoop likely leaked")
 	}
 
-	// Close() blocks on <-t.done, which readLoop closes on exit, so reaching
-	// this point already proves the read goroutine terminated. Confirm the
-	// process was actually reaped too.
+	select {
+	case <-term.done:
+	default:
+		t.Fatal("readLoop still running after Close()")
+	}
 	if term.cmd.ProcessState == nil {
 		t.Fatal("expected process to have exited after Close()")
 	}
