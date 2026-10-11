@@ -406,3 +406,12 @@ func (m *MarkupContent) UnmarshalJSON(data []byte) error {
 	*m = MarkupContent(a)
 	return nil
 }
+
+type ConfigurationParams struct {
+	Items []ConfigurationItem `json:"items"`
+}
+
+type ConfigurationItem struct {
+	ScopeURI string `json:"scopeUri,omitempty"`
+	Section  string `json:"section,omitempty"`
+}

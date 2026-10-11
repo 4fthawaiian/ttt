@@ -22,8 +22,8 @@ func TestMain(m *testing.M) {
 
 func runFakeServer(mode string) {
 	codec := NewCodec(os.Stdin, os.Stdout)
-	reply := func(id *int, result any) {
-		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": *id, "result": result})
+	reply := func(id json.RawMessage, result any) {
+		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 		fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
 	}
 	for {

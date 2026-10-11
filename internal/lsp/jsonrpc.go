@@ -17,18 +17,42 @@ type Request struct {
 	Params  any    `json:"params,omitempty"`
 }
 
+// Response is any message read from the server, including requests ttt must
+// answer. ID stays raw so a string id can be echoed back exactly as sent.
 type Response struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *int            `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *RPCError       `json:"error,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-func (r *Response) IsNotification() bool {
-	return r.ID == nil && r.Method != ""
+// HasID treats "id": null like an absent id; some servers send it on
+// notifications.
+func (r *Response) HasID() bool {
+	return len(r.ID) > 0 && string(r.ID) != "null"
 }
+
+func (r *Response) IsNotification() bool {
+	return !r.HasID() && r.Method != ""
+}
+
+func (r *Response) IsRequest() bool {
+	return r.HasID() && r.Method != ""
+}
+
+// Reply is ttt's answer to a server request. Result must be set (to the JSON
+// literal null if nothing else) unless Error is, because the protocol requires
+// exactly one of the two.
+type Reply struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
+}
+
+const CodeMethodNotFound = -32601
 
 type RPCError struct {
 	Code    int    `json:"code"`
@@ -52,8 +76,8 @@ func NewCodec(r io.Reader, w io.Writer) *Codec {
 	}
 }
 
-func (c *Codec) Send(req Request) error {
-	data, err := json.Marshal(req)
+func (c *Codec) Send(msg any) error {
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}

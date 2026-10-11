@@ -55,11 +55,28 @@ func TestCodecReceive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.ID == nil || *resp.ID != 1 {
-		t.Fatal("expected id 1")
+	if string(resp.ID) != "1" {
+		t.Fatalf("expected id 1, got %s", resp.ID)
 	}
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %v", resp.Error)
+	}
+}
+
+func TestCodecReceiveServerRequestWithStringID(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":"abc","method":"client/registerCapability","params":{"registrations":[]}}`
+	msg := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(body), body)
+	codec := NewCodec(bytes.NewReader([]byte(msg)), nil)
+
+	resp, err := codec.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.IsRequest() || resp.IsNotification() {
+		t.Fatal("expected a server request")
+	}
+	if string(resp.ID) != `"abc"` {
+		t.Fatalf("expected id \"abc\", got %s", resp.ID)
 	}
 }
 

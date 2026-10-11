@@ -139,17 +139,46 @@ func (c *Client) readLoop() {
 			}
 			continue
 		}
-		if resp.ID != nil {
-			c.mu.Lock()
-			ch, ok := c.pending[*resp.ID]
-			if ok {
-				delete(c.pending, *resp.ID)
-			}
-			c.mu.Unlock()
-			if ok {
-				ch <- resp
-			}
+		if resp.IsRequest() {
+			slog.Debug("lsp server request", "method", resp.Method)
+			// Off the read loop: a server blocked writing to us may not be
+			// reading its stdin, and a reply written from here could then
+			// deadlock both sides.
+			go c.answer(resp)
+			continue
 		}
+		var id int
+		if !resp.HasID() || json.Unmarshal(resp.ID, &id) != nil {
+			continue
+		}
+		c.mu.Lock()
+		ch, ok := c.pending[id]
+		if ok {
+			delete(c.pending, id)
+		}
+		c.mu.Unlock()
+		if ok {
+			ch <- resp
+		}
+	}
+}
+
+// answer replies to a server request; TypeScript 7's native server handles
+// nothing else until its requests are answered.
+func (c *Client) answer(req Response) {
+	reply := Reply{JSONRPC: "2.0", ID: req.ID}
+	switch req.Method {
+	case "workspace/configuration":
+		var params ConfigurationParams
+		_ = json.Unmarshal(req.Params, &params)
+		reply.Result, _ = json.Marshal(make([]any, len(params.Items)))
+	case "client/registerCapability", "client/unregisterCapability":
+		reply.Result = json.RawMessage("null")
+	default:
+		reply.Error = &RPCError{Code: CodeMethodNotFound, Message: "method not supported: " + req.Method}
+	}
+	if err := c.codec.Send(reply); err != nil {
+		slog.Debug("lsp reply failed", "method", req.Method, "err", err)
 	}
 }
 
