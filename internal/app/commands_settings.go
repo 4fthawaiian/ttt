@@ -50,8 +50,8 @@ func (a *App) applyChevrons(ap config.AppearanceSettings) {
 		a.Search.ChevronCollapsed = collapsed
 		a.Search.ChevronExpanded = expanded
 	}
-	if a.EditorGroup != nil && a.EditorGroup.Editor != nil {
-		a.EditorGroup.Editor.FoldChevronCollapsed, a.EditorGroup.Editor.FoldChevronExpanded = collapsed, expanded
+	if a.EditorGroup != nil {
+		a.EditorGroup.SetChevrons(collapsed, expanded)
 	}
 }
 
@@ -84,6 +84,9 @@ func (a *App) ApplySettings(s config.Settings) {
 	a.EditorGroup.SetDiffDefaults(configuredDiffMode(s.Editor.DiffMode), configuredDiffContext(s.Editor.DiffContext), s.Editor.DiffWordWrap)
 	a.EditorGroup.SetDiffHighContrast(s.Editor.DiffHighContrast)
 	a.EditorGroup.SetDiffCollapsedEmphasis(s.Editor.DiffCollapsedEmphasis)
+	a.EditorGroup.SetDiffSigns(s.Editor.DiffSigns)
+	a.EditorGroup.SetDiffSignsColor(s.Editor.DiffSignsColor)
+	a.EditorGroup.SetDiffGutterHighlight(s.Editor.DiffGutterHighlight)
 	a.EditorGroup.BracketPairColorization = s.Editor.BracketPairColorization
 	a.EditorGroup.UndoDeleteCursorStart = s.Editor.UndoDeleteCursorStart
 	a.EditorGroup.ApplyUndoDeleteCursorStart(s.Editor.UndoDeleteCursorStart)
