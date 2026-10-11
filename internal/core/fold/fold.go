@@ -60,9 +60,26 @@ func (s *State) Toggle(line int) {
 }
 
 func (s *State) Expand(line int) {
-	if s.collapsed[line] {
-		delete(s.collapsed, line)
-		s.dirty = true
+	for i := len(s.ranges) - 1; i >= 0; i-- {
+		r := s.ranges[i]
+		if r.StartLine <= line && line <= r.EndLine && s.collapsed[r.StartLine] {
+			delete(s.collapsed, r.StartLine)
+			s.dirty = true
+			return
+		}
+	}
+}
+
+func (s *State) Collapse(line int) {
+	for i := len(s.ranges) - 1; i >= 0; i-- {
+		r := s.ranges[i]
+		if r.StartLine <= line && line <= r.EndLine {
+			if !s.collapsed[r.StartLine] {
+				s.collapsed[r.StartLine] = true
+				s.dirty = true
+			}
+			return
+		}
 	}
 }
 

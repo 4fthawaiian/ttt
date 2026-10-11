@@ -10,6 +10,33 @@ import (
 	"github.com/eugenioenko/ttt/internal/ui"
 )
 
+func (a *App) OpenFold() {
+	if !a.EditorGroup.IsEditorActive() {
+		return
+	}
+	e := a.EditorGroup.Editor
+	if e.Folds == nil || e.WordWrap {
+		return
+	}
+	e.Folds.Expand(e.Cursor.Line)
+}
+
+func (a *App) CloseFold() {
+	if !a.EditorGroup.IsEditorActive() {
+		return
+	}
+	e := a.EditorGroup.Editor
+	if e.Folds == nil || e.WordWrap {
+		return
+	}
+	e.Folds.Collapse(e.Cursor.Line)
+	if r := e.Folds.ContainingFold(e.Cursor.Line); r != nil {
+		e.Cursor.Line = r.StartLine
+		e.Cursor.Col = 0
+	}
+	e.EnsureCursorVisible()
+}
+
 func (a *App) editorPathLang() (string, string) {
 	path := a.EditorGroup.ActiveFilePath()
 	lang := ""
@@ -590,6 +617,18 @@ func registerEditorCommands(app *App) {
 				e.Folds.Toggle(e.Cursor.Line)
 			}
 		},
+	})
+
+	reg.Register(command.Command{
+		ID: "fold.open", Title: "Open Fold",
+		Keywords: []string{"editor", "expand", "show", "lines"},
+		Handler:  app.OpenFold,
+	})
+
+	reg.Register(command.Command{
+		ID: "fold.close", Title: "Close Fold",
+		Keywords: []string{"editor", "collapse", "hide", "lines"},
+		Handler:  app.CloseFold,
 	})
 
 	reg.Register(command.Command{

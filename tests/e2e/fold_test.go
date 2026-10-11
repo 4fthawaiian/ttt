@@ -10,6 +10,69 @@ import (
 	"github.com/gdamore/tcell/v3"
 )
 
+func TestFoldOpenClose_Commands(t *testing.T) {
+	h := newTestHarness(t, 80, 30)
+	path := filepath.Join(h.dir, "nested.py")
+	if err := os.WriteFile(path, []byte("def outer():\n    if ready:\n        run()\n    done()\n\noutside()\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h.app.EditorGroup.OpenFile(path)
+	h.redraw()
+	e := h.app.EditorGroup.Editor
+	for _, title := range []string{"Open Fold", "Close Fold"} {
+		cmd, ok := h.reg.FindByTitle(title)
+		if !ok || cmd.Hidden {
+			t.Fatalf("%q missing from command palette", title)
+		}
+	}
+
+	e.Cursor.Line, e.Cursor.Col = 2, 8
+	h.exec("fold.close")
+	if !e.Folds.IsCollapsed(1) || e.Folds.IsCollapsed(0) {
+		t.Fatal("close should collapse only the innermost fold")
+	}
+	if e.Cursor.Line != 1 || e.Folds.IsLineHidden(e.Cursor.Line) {
+		t.Fatalf("cursor should move to visible fold header, got line %d", e.Cursor.Line)
+	}
+	h.assertNotContains("run()")
+	h.assertContains("done()")
+	h.exec("fold.close")
+	if !e.Folds.IsCollapsed(1) || e.Folds.IsCollapsed(0) {
+		t.Fatal("repeated close should preserve the collapsed inner fold")
+	}
+	h.exec("fold.open")
+	h.assertContains("run()")
+	h.exec("fold.open")
+	if e.Folds.HasCollapsedFolds() {
+		t.Fatal("repeated open should leave the fold open")
+	}
+
+	e.Cursor.Line = 5
+	h.exec("fold.close")
+	if e.Folds.HasCollapsedFolds() || e.Cursor.Line != 5 {
+		t.Fatal("close outside folds should do nothing")
+	}
+
+	e.WordWrap = true
+	e.Cursor.Line = 1
+	h.exec("fold.close")
+	if e.Folds.HasCollapsedFolds() {
+		t.Fatal("close should do nothing with word wrap enabled")
+	}
+	e.Folds.CollapseAll()
+	h.exec("fold.open")
+	if !e.Folds.IsCollapsed(0) || !e.Folds.IsCollapsed(1) {
+		t.Fatal("open should do nothing with word wrap enabled")
+	}
+	e.WordWrap = false
+	e.Folds = nil
+	h.exec("fold.open")
+	h.exec("fold.close")
+	h.app.EditorGroup.CloseAllTabs()
+	h.exec("fold.open")
+	h.exec("fold.close")
+}
+
 func TestFoldToggle_HidesLines(t *testing.T) {
 	h := newTestHarness(t, 80, 30)
 	goFile := filepath.Join(h.dir, "main.go")

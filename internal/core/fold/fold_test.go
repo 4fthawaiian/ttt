@@ -55,6 +55,93 @@ func TestToggleInsideFold(t *testing.T) {
 	}
 }
 
+func TestExpand(t *testing.T) {
+	ranges := []Range{{StartLine: 1, EndLine: 8}, {StartLine: 3, EndLine: 5}}
+	for _, tc := range []struct {
+		name      string
+		line      int
+		collapsed []int
+		want      []int
+	}{
+		{name: "first line", line: 1, collapsed: []int{1}},
+		{name: "body", line: 7, collapsed: []int{1}},
+		{name: "last line", line: 8, collapsed: []int{1}},
+		{name: "nested first line", line: 3, collapsed: []int{1, 3}, want: []int{1}},
+		{name: "nested body", line: 4, collapsed: []int{1, 3}, want: []int{1}},
+		{name: "open inner fold in collapsed outer", line: 4, collapsed: []int{1}},
+		{name: "already open", line: 4},
+		{name: "before folds", line: 0, collapsed: []int{1, 3}, want: []int{1, 3}},
+		{name: "after folds", line: 9, collapsed: []int{1, 3}, want: []int{1, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewState()
+			s.SetRanges(ranges)
+			for _, line := range tc.collapsed {
+				s.Toggle(line)
+			}
+			s.VisibleLines(10)
+			s.Expand(tc.line)
+			want := NewState()
+			want.SetRanges(ranges)
+			for _, line := range tc.want {
+				want.Toggle(line)
+			}
+			if !reflect.DeepEqual(s.collapsed, want.collapsed) {
+				t.Fatalf("collapsed folds = %v, want %v", s.collapsed, want.collapsed)
+			}
+			if got := s.VisibleLines(10); !reflect.DeepEqual(got, want.VisibleLines(10)) {
+				t.Fatalf("visible lines = %v, want %v", got, want.VisibleLines(10))
+			}
+		})
+	}
+}
+
+func TestCollapse(t *testing.T) {
+	ranges := []Range{{StartLine: 1, EndLine: 8}, {StartLine: 3, EndLine: 5}}
+	for _, tc := range []struct {
+		name      string
+		line      int
+		collapsed []int
+		want      []int
+	}{
+		{name: "first line", line: 1, want: []int{1}},
+		{name: "body", line: 7, want: []int{1}},
+		{name: "last line", line: 8, want: []int{1}},
+		{name: "nested first line", line: 3, want: []int{3}},
+		{name: "nested body", line: 4, want: []int{3}},
+		{name: "nested last line", line: 5, want: []int{3}},
+		{name: "already closed", line: 4, collapsed: []int{3}, want: []int{3}},
+		{name: "collapsed outer", line: 4, collapsed: []int{1}, want: []int{1, 3}},
+		{name: "before folds", line: 0},
+		{name: "after folds", line: 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewState()
+			s.SetRanges(ranges)
+			for _, line := range tc.collapsed {
+				s.Toggle(line)
+			}
+			s.VisibleLines(10)
+			s.Collapse(tc.line)
+			want := NewState()
+			want.SetRanges(ranges)
+			for _, line := range tc.want {
+				want.Toggle(line)
+			}
+			if !reflect.DeepEqual(s.collapsed, want.collapsed) {
+				t.Fatalf("collapsed folds = %v, want %v", s.collapsed, want.collapsed)
+			}
+			if got := s.VisibleLines(10); !reflect.DeepEqual(got, want.VisibleLines(10)) {
+				t.Fatalf("visible lines = %v, want %v", got, want.VisibleLines(10))
+			}
+			s.Collapse(tc.line)
+			if !reflect.DeepEqual(s.collapsed, want.collapsed) {
+				t.Fatalf("repeated close changed collapsed folds to %v", s.collapsed)
+			}
+		})
+	}
+}
+
 func TestCollapseAll(t *testing.T) {
 	s := NewState()
 	s.SetRanges([]Range{
