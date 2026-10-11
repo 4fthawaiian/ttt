@@ -20,6 +20,7 @@
     "diffSigns": false,
     "diffSignsColor": true,
     "diffGutterHighlight": true,
+    "diffColorGutterNumbers": false,
     "lineNumbers": true,
     "formatOnSave": false,
     "insertFinalNewline": true,

@@ -90,6 +90,7 @@ func (a *App) ApplySettings(s config.Settings) {
 	a.EditorGroup.SetDiffSigns(s.Editor.DiffSigns)
 	a.EditorGroup.SetDiffSignsColor(s.Editor.DiffSignsColor)
 	a.EditorGroup.SetDiffGutterHighlight(s.Editor.DiffGutterHighlight)
+	a.EditorGroup.SetDiffColorGutterNumbers(s.Editor.DiffColorGutterNumbers)
 	a.EditorGroup.BracketPairColorization = s.Editor.BracketPairColorization
 	a.EditorGroup.UndoDeleteCursorStart = s.Editor.UndoDeleteCursorStart
 	a.EditorGroup.ApplyUndoDeleteCursorStart(s.Editor.UndoDeleteCursorStart)

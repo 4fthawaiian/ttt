@@ -151,6 +151,7 @@ type CommitDetailWidget struct {
 	signs            bool
 	signsColor       bool
 	gutterHighlight  bool
+	colorNumbers     bool
 	chevronCollapsed rune
 	chevronExpanded  rune
 	gutterStyle      string
@@ -296,6 +297,11 @@ func (d *CommitDetailWidget) SetDiffGutterHighlight(enabled bool) {
 	d.applyViewOptions()
 }
 
+func (d *CommitDetailWidget) SetDiffColorGutterNumbers(enabled bool) {
+	d.colorNumbers = enabled
+	d.applyViewOptions()
+}
+
 func (d *CommitDetailWidget) setGutterStyle(style string) {
 	if d.gutterStyle == style {
 		return
@@ -320,6 +326,7 @@ func (d *CommitDetailWidget) applyViewOptions() {
 		v.signs = d.signs
 		v.signsColor = d.signsColor
 		v.gutterHighlight = d.gutterHighlight
+		v.colorNumbers = d.colorNumbers
 		v.gapChevron = d.chevronCollapsed
 		v.minGutter = d.gutterW
 		v.applyOverlayOptions()

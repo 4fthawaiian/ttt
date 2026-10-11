@@ -231,6 +231,7 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 	editorGroup.DiffSigns = cfg.Settings.Editor.DiffSigns
 	editorGroup.DiffSignsColor = cfg.Settings.Editor.DiffSignsColor
 	editorGroup.DiffGutterHighlight = cfg.Settings.Editor.DiffGutterHighlight
+	editorGroup.DiffColorGutterNumbers = cfg.Settings.Editor.DiffColorGutterNumbers
 	editorGroup.Editor.WordWrap = cfg.Settings.Editor.WordWrap
 	editorGroup.Editor.AutoDedent = cfg.Settings.Editor.IsAutoDedentEnabled()
 	editorGroup.Editor.AutoIndent = cfg.Settings.Editor.IsAutoIndentEnabled()

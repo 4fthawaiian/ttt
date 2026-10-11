@@ -106,6 +106,7 @@ type EditorSettings struct {
 	DiffSigns               bool             `json:"diffSigns"`
 	DiffSignsColor          bool             `json:"diffSignsColor"`
 	DiffGutterHighlight     bool             `json:"diffGutterHighlight"`
+	DiffColorGutterNumbers  bool             `json:"diffColorGutterNumbers"`
 	LineNumbers             bool             `json:"lineNumbers"`
 	CursorStyle             string           `json:"cursorStyle,omitempty"`
 	FormatOnSave            bool             `json:"formatOnSave"`
@@ -166,6 +167,7 @@ func DefaultEditorSettings() EditorSettings {
 		DiffContext:             DiffContextChanges,
 		DiffSignsColor:          true,
 		DiffGutterHighlight:     true,
+		DiffColorGutterNumbers:  false,
 		LineNumbers:             true,
 		InsertFinalNewline:      true,
 		GutterStyle:             "compact",

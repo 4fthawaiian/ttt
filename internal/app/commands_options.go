@@ -68,6 +68,11 @@ func (a *App) ToggleDiffGutterHighlight() {
 	a.SaveAndApplySettings()
 }
 
+func (a *App) ToggleDiffColorGutterNumbers() {
+	a.Settings.Editor.DiffColorGutterNumbers = !a.Settings.Editor.DiffColorGutterNumbers
+	a.SaveAndApplySettings()
+}
+
 func (a *App) ToggleDiffCollapsedEmphasis() {
 	a.Settings.Editor.DiffCollapsedEmphasis = !a.Settings.Editor.DiffCollapsedEmphasis
 	a.SaveAndApplySettings()
@@ -418,6 +423,7 @@ func (a *App) BuildDiffViewOptions() []ui.ContextMenuItem {
 		{Label: "Gutter Signs", Command: "options.toggleDiffSigns", Checked: menuChecked(a.Settings.Editor.DiffSigns)},
 		{Label: "Colored Gutter Signs", Command: "options.toggleDiffSignsColor", Checked: menuChecked(a.Settings.Editor.DiffSignsColor)},
 		{Label: "Gutter Highlight", Command: "options.toggleDiffGutterHighlight", Checked: menuChecked(a.Settings.Editor.DiffGutterHighlight)},
+		{Label: "Colored Gutter Numbers", Command: "options.toggleDiffColorGutterNumbers", Checked: menuChecked(a.Settings.Editor.DiffColorGutterNumbers)},
 		{Label: "Emphasize Collapsed Rows", Command: "options.toggleDiffCollapsedEmphasis", Checked: menuChecked(a.Settings.Editor.DiffCollapsedEmphasis)},
 	}
 }
@@ -526,6 +532,12 @@ func registerOptionsCommands(app *App) {
 		ID: "options.toggleDiffGutterHighlight", Title: "Toggle Diff Gutter Highlight",
 		Keywords: []string{"preferences", "settings", "git", "diff", "gutter", "line numbers", "highlight", "color"},
 		Handler:  app.ToggleDiffGutterHighlight,
+	})
+
+	reg.Register(command.Command{
+		ID: "options.toggleDiffColorGutterNumbers", Title: "Toggle Colored Diff Gutter Numbers",
+		Keywords: []string{"preferences", "settings", "git", "diff", "gutter", "line numbers", "color"},
+		Handler:  app.ToggleDiffColorGutterNumbers,
 	})
 
 	reg.Register(command.Command{

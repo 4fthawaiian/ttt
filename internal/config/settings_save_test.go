@@ -204,6 +204,7 @@ func TestDiffSettingsAreAlwaysWritten(t *testing.T) {
 	s.Editor.DiffSigns = false
 	s.Editor.DiffSignsColor = false
 	s.Editor.DiffGutterHighlight = false
+	s.Editor.DiffColorGutterNumbers = false
 	data, err := json.Marshal(s)
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +215,7 @@ func TestDiffSettingsAreAlwaysWritten(t *testing.T) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"diffSigns", "diffSignsColor", "diffGutterHighlight", "diffHighContrast", "diffEmphasizeCollapsedRows"} {
+	for _, key := range []string{"diffSigns", "diffSignsColor", "diffGutterHighlight", "diffColorGutterNumbers", "diffHighContrast", "diffEmphasizeCollapsedRows"} {
 		if string(raw.Editor[key]) != "false" {
 			t.Errorf("editor.%s = %s, want false written to settings.json", key, raw.Editor[key])
 		}
@@ -227,8 +228,8 @@ func TestDiffGutterSettingsDefaultWhenMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := LoadSettings().Editor
-	if got.DiffSigns || !got.DiffSignsColor || !got.DiffGutterHighlight {
-		t.Errorf("missing keys loaded as diffSigns=%v diffSignsColor=%v diffGutterHighlight=%v, want false, true, true", got.DiffSigns, got.DiffSignsColor, got.DiffGutterHighlight)
+	if got.DiffSigns || !got.DiffSignsColor || !got.DiffGutterHighlight || got.DiffColorGutterNumbers {
+		t.Errorf("missing keys loaded as diffSigns=%v diffSignsColor=%v diffGutterHighlight=%v diffColorGutterNumbers=%v, want false, true, true, false", got.DiffSigns, got.DiffSignsColor, got.DiffGutterHighlight, got.DiffColorGutterNumbers)
 	}
 }
 

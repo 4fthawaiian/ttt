@@ -37,6 +37,7 @@ type DiffOverlay struct {
 	Signs           bool
 	SignsColor      bool
 	GutterHighlight bool
+	ColorNumbers    bool
 	GapChevron      rune
 	// MinGutter widens the diff gutter so several stacked diffs line up.
 	MinGutter int
@@ -386,8 +387,11 @@ func (o *DiffOverlay) gutterLook(kind diff.LineKind, base, collapsed term.Style)
 	if o != nil && !o.SignsColor {
 		look.sign = term.StyleLineNumber
 	}
+	if o != nil && !o.ColorNumbers {
+		look.num = base
+	}
 	if o != nil && !o.GutterHighlight {
-		look.num, look.bg = base, 0
+		look.bg = 0
 	}
 	return look
 }

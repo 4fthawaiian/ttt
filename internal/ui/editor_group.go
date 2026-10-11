@@ -101,6 +101,7 @@ type EditorGroupWidget struct {
 	DiffSigns               bool
 	DiffSignsColor          bool
 	DiffGutterHighlight     bool
+	DiffColorGutterNumbers  bool
 	ChevronCollapsed        rune
 	ChevronExpanded         rune
 	ImageProtocol           string
@@ -613,6 +614,7 @@ func (g *EditorGroupWidget) ApplyDiffDefaults(surface DiffModeSurface) {
 		d.SetDiffSigns(g.DiffSigns)
 		d.SetDiffSignsColor(g.DiffSignsColor)
 		d.SetDiffGutterHighlight(g.DiffGutterHighlight)
+		d.SetDiffColorGutterNumbers(g.DiffColorGutterNumbers)
 	}
 	if c, ok := surface.(chevronSurface); ok {
 		c.SetChevrons(g.ChevronCollapsed, g.ChevronExpanded)
@@ -655,6 +657,11 @@ func (g *EditorGroupWidget) SetDiffSignsColor(enabled bool) {
 func (g *EditorGroupWidget) SetDiffGutterHighlight(enabled bool) {
 	g.DiffGutterHighlight = enabled
 	g.eachDiffSigns(func(d diffSignsSurface) { d.SetDiffGutterHighlight(enabled) })
+}
+
+func (g *EditorGroupWidget) SetDiffColorGutterNumbers(enabled bool) {
+	g.DiffColorGutterNumbers = enabled
+	g.eachDiffSigns(func(d diffSignsSurface) { d.SetDiffColorGutterNumbers(enabled) })
 }
 
 func (g *EditorGroupWidget) eachDiffSigns(apply func(diffSignsSurface)) {
@@ -701,6 +708,7 @@ type diffSignsSurface interface {
 	SetDiffSigns(bool)
 	SetDiffSignsColor(bool)
 	SetDiffGutterHighlight(bool)
+	SetDiffColorGutterNumbers(bool)
 	setGutterStyle(string)
 }
 

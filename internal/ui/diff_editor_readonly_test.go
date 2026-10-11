@@ -172,36 +172,77 @@ func TestDiffEditorSignsFollowSettingAndGutterStyle(t *testing.T) {
 }
 
 func TestDiffEditorGutterHighlightAndSignColors(t *testing.T) {
-	render := func(highlight, signsColor bool) [2]gutterCells {
-		d := NewDiffEditorWidget("f.txt", diff.FileDiff{}, []string{"a", "b", "c"}, []string{"a", "B", "c"}, true)
-		d.SetMode(DiffModeUnified)
-		d.SetDiffSigns(true)
-		d.SetDiffGutterHighlight(highlight)
-		d.SetDiffSignsColor(signsColor)
-		grid := renderDiffEditor(d, 30, 6)
-		w := d.unified.GutterWidth()
-		return [2]gutterCells{readGutter(grid, 1, w), readGutter(grid, 2, w)}
+	oldLines, newLines := []string{"a", "b", "c"}, []string{"a", "B", "c"}
+	builders := map[string]func(highlight, numbers, signsColor bool) ([][]term.Cell, int){
+		"read-only": func(highlight, numbers, signsColor bool) ([][]term.Cell, int) {
+			d := NewDiffEditorWidget("f.txt", diff.FileDiff{}, oldLines, newLines, true)
+			d.SetMode(DiffModeUnified)
+			d.SetDiffSigns(true)
+			d.SetDiffGutterHighlight(highlight)
+			d.SetDiffColorGutterNumbers(numbers)
+			d.SetDiffSignsColor(signsColor)
+			return renderDiffEditor(d, 30, 6), d.unified.GutterWidth()
+		},
+		"editable": func(highlight, numbers, signsColor bool) ([][]term.Cell, int) {
+			d := fullLiveDiff(oldLines, newLines)
+			d.SetDiffSigns(true)
+			d.SetDiffGutterHighlight(highlight)
+			d.SetDiffColorGutterNumbers(numbers)
+			d.SetDiffSignsColor(signsColor)
+			e := newRowsEditor(newLines, 30, 6)
+			e.LineNumbers = true
+			e.Passive = true
+			e.SetDiffOverlay(d.liveUnified)
+			grid := makeGrid(30, 6)
+			e.Render(NewRenderSurface(grid, Rect{W: 30, H: 6}))
+			return grid, e.GutterWidth()
+		},
 	}
-	for _, tt := range []struct {
-		highlight, signsColor bool
-		want                  [2]gutterCells
-	}{
-		{true, true, [2]gutterCells{
-			{num: term.StyleGutterDeleted, bg: term.StyleDiffDeleted, sign: term.StyleGutterDeleted},
-			{num: term.StyleGutterAdded, bg: term.StyleDiffAdded, sign: term.StyleGutterAdded},
-		}},
-		{false, true, [2]gutterCells{
-			{num: term.StyleLineNumber, sign: term.StyleGutterDeleted},
-			{num: term.StyleLineNumber, sign: term.StyleGutterAdded},
-		}},
-		{true, false, [2]gutterCells{
-			{num: term.StyleGutterDeleted, bg: term.StyleDiffDeleted, sign: term.StyleLineNumber},
-			{num: term.StyleGutterAdded, bg: term.StyleDiffAdded, sign: term.StyleLineNumber},
-		}},
-	} {
-		if got := render(tt.highlight, tt.signsColor); got != tt.want {
-			t.Errorf("highlight %v, signs color %v: %+v, want %+v", tt.highlight, tt.signsColor, got, tt.want)
+	for name, render := range builders {
+		for _, tt := range []struct {
+			highlight, numbers, signsColor bool
+			want                           [2]gutterCells
+		}{
+			{true, true, true, [2]gutterCells{
+				{num: term.StyleGutterDeleted, bg: term.StyleDiffDeleted, sign: term.StyleGutterDeleted},
+				{num: term.StyleGutterAdded, bg: term.StyleDiffAdded, sign: term.StyleGutterAdded},
+			}},
+			{true, false, true, [2]gutterCells{
+				{num: term.StyleLineNumber, bg: term.StyleDiffDeleted, sign: term.StyleGutterDeleted},
+				{num: term.StyleLineNumber, bg: term.StyleDiffAdded, sign: term.StyleGutterAdded},
+			}},
+			{false, true, true, [2]gutterCells{
+				{num: term.StyleGutterDeleted, sign: term.StyleGutterDeleted},
+				{num: term.StyleGutterAdded, sign: term.StyleGutterAdded},
+			}},
+			{false, false, true, [2]gutterCells{
+				{num: term.StyleLineNumber, sign: term.StyleGutterDeleted},
+				{num: term.StyleLineNumber, sign: term.StyleGutterAdded},
+			}},
+			{true, true, false, [2]gutterCells{
+				{num: term.StyleGutterDeleted, bg: term.StyleDiffDeleted, sign: term.StyleLineNumber},
+				{num: term.StyleGutterAdded, bg: term.StyleDiffAdded, sign: term.StyleLineNumber},
+			}},
+			{true, false, false, [2]gutterCells{
+				{num: term.StyleLineNumber, bg: term.StyleDiffDeleted, sign: term.StyleLineNumber},
+				{num: term.StyleLineNumber, bg: term.StyleDiffAdded, sign: term.StyleLineNumber},
+			}},
+		} {
+			grid, w := render(tt.highlight, tt.numbers, tt.signsColor)
+			if got := [2]gutterCells{readGutter(grid, 1, w), readGutter(grid, 2, w)}; got != tt.want {
+				t.Errorf("%s: highlight %v, numbers %v, signs color %v: %+v, want %+v", name, tt.highlight, tt.numbers, tt.signsColor, got, tt.want)
+			}
 		}
+	}
+}
+
+func TestDiffColorGutterNumbersDefaultsToPlain(t *testing.T) {
+	d := NewDiffEditorWidget("f.txt", diff.FileDiff{}, []string{"a", "b", "c"}, []string{"a", "B", "c"}, true)
+	d.SetMode(DiffModeUnified)
+	d.SetDiffSigns(true)
+	grid := renderDiffEditor(d, 30, 6)
+	if got := readGutter(grid, 1, d.unified.GutterWidth()); got.num != term.StyleLineNumber || got.bg != term.StyleDiffDeleted {
+		t.Errorf("default changed row: %+v, want plain numbers over the deleted tint", got)
 	}
 }
 

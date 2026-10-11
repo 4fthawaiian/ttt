@@ -50,7 +50,8 @@ All editor settings are nested under the `editor` key.
 | `editor.diffEmphasizeCollapsedRows` | bool | `false` | Emphasize collapsed or omitted-line rows in diff views |
 | `editor.diffSigns` | bool | `false` | Draw `+`/`−` in the diff gutter. Off by default: the gutter highlight already marks changed lines. Gap rows show their expand chevron regardless of this setting. The `minimal` gutter style has no room for signs or the chevron |
 | `editor.diffSignsColor` | bool | `true` | Color diff gutter signs with the added/deleted colors; when off they use the line number color |
-| `editor.diffGutterHighlight` | bool | `true` | Color the line numbers of added and deleted rows and tint their gutter; when off the gutter stays plain and only the text is tinted |
+| `editor.diffGutterHighlight` | bool | `true` | Tint the gutter background of added and deleted rows; when off the gutter stays plain and only the text is tinted |
+| `editor.diffColorGutterNumbers` | bool | `false` | Color the line numbers of added and deleted rows with the added/deleted gutter colors; when off the numbers use the normal line number color |
 | `editor.autoIndent` | bool | `true` | Inherit the previous line's indent on Enter, plus one level after `{ ( [ :` (turn off for `noautoindent` behavior) |
 | `editor.autoDedent` | bool | `true` | Dedent one level when typing a closing `} ) ]` on a blank line |
 | `editor.lineNumbers` | bool | `true` | Show line numbers in the gutter |
@@ -231,6 +232,7 @@ When `editor.formatOnSave` is `true`, external formatters take priority over LSP
     "diffSigns": false,
     "diffSignsColor": true,
     "diffGutterHighlight": true,
+    "diffColorGutterNumbers": false,
     "autoIndent": true,
     "autoDedent": true,
     "lineNumbers": true,
