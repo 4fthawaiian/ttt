@@ -33,10 +33,16 @@ if (startup < 0) throw new Error('The tcell browser startup changed; update the 
 frontend = frontend.slice(0, startup) + 'await globalThis.tttStart(new Go());\n';
 const fitHook = '  fit.fit();';
 if (!frontend.includes(fitHook)) throw new Error('The tcell browser sizing changed; update the playground adapter.');
-frontend = frontend.replace(fitHook, `${fitHook}
-  const cols = Math.min(term.cols, positiveInt(container.dataset.maxCols) ?? term.cols);
-  const rows = Math.min(term.rows, positiveInt(container.dataset.maxRows) ?? term.rows);
-  if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);`);
+frontend = frontend.replace(fitHook, `  const metrics = term.renderer?.getMetrics?.();
+  if (!metrics?.width || !metrics?.height) return;
+  const maxCols = positiveInt(container.dataset.maxCols) ?? Infinity;
+  const maxRows = positiveInt(container.dataset.maxRows) ?? Infinity;
+  const cols = Math.max(2, Math.min(Math.floor(container.clientWidth / metrics.width), maxCols));
+  const rows = Math.max(1, Math.min(Math.floor(container.clientHeight / metrics.height), maxRows));
+  if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows);
+  if (Number.isFinite(maxCols)) {
+    window.parent.postMessage({ type: 'ttt-demo-width', width: maxCols * metrics.width }, location.origin);
+  }`);
 frontend = frontend.replace(/function showFatal\(error\) \{[\s\S]*?\n\}/, 'function showFatal(error) {\n  globalThis.tttDemoError(error);\n}');
 writeFileSync(join(output, 'tcell.js'), frontend);
 
