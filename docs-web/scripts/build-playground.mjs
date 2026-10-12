@@ -31,6 +31,14 @@ let frontend = readFileSync(join(tcell, 'webfiles/tcell.js'), 'utf8');
 const startup = frontend.lastIndexOf('const go = new Go();');
 if (startup < 0) throw new Error('The tcell browser startup changed; update the playground adapter.');
 frontend = frontend.slice(0, startup) + 'await globalThis.tttStart(new Go());\n';
+const fontHook = `  fontFamily: '"Menlo", "Andale Mono", "Courier New", monospace',`;
+const terminalHook = 'const term = new Terminal({';
+if (!frontend.includes(fontHook) || !frontend.includes(terminalHook)) throw new Error('The tcell browser font setup changed; update the playground adapter.');
+frontend = frontend.replace(fontHook, `  fontFamily: '"JetBrains Mono", monospace',`);
+frontend = frontend.replace(terminalHook, `await Promise.all(['normal 400', 'normal 700', 'italic 400', 'italic 700'].map(
+  style => document.fonts.load(style + ' 14px "JetBrains Mono"')
+));
+${terminalHook}`);
 const fitHook = '  fit.fit();';
 if (!frontend.includes(fitHook)) throw new Error('The tcell browser sizing changed; update the playground adapter.');
 frontend = frontend.replace(fitHook, `  const metrics = term.renderer?.getMetrics?.();

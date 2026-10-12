@@ -14,3 +14,7 @@ button { font: inherit; color: inherit; background: #222; border: 1px solid #555
 a { color: #aaa; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/jetbrains-mono/JetBrainsMono-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/jetbrains-mono/JetBrainsMono-Bold.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: block; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/jetbrains-mono/JetBrainsMono-Italic.woff2') format('woff2'); font-weight: 400; font-style: italic; font-display: block; }
+@font-face { font-family: 'JetBrains Mono'; src: url('../fonts/jetbrains-mono/JetBrainsMono-BoldItalic.woff2') format('woff2'); font-weight: 700; font-style: italic; font-display: block; }
