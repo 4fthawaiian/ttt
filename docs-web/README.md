@@ -9,7 +9,7 @@ pnpm dev
 
 Open `/demo/` to try the editor. `pnpm build` generates the static site, including the playground. `pnpm test:playground` checks the browser filesystem bridge.
 
-The terminal is centered and capped at 120 columns by 36 rows, with a smaller grid on narrow or short screens.
+The terminal is centered and capped at 120 columns by 50 rows, with a smaller grid on narrow or short screens.
 
 The playground builds `cmd/ttt-web` for `js/wasm`, reuses tcell's browser frontend, and seeds a ZenFS in-memory filesystem from tracked text files in the repository. Generated assets live in the ignored `public/playground/` directory. GitHub Pages builds a fresh source snapshot on each push to main.
 
