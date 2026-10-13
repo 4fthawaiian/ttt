@@ -185,6 +185,23 @@ func (e *EditorPaneWidget) gutterLineAt(screenY int) (int, bool) {
 	return row.bufLine, !row.isPhantom() && row.startCol == 0 && row.bufLine >= 0 && row.bufLine < len(e.Buf.Lines)
 }
 
+func (e *EditorPaneWidget) TextPosAt(mx, my int) (line, col int, ok bool) {
+	r := e.GetRect()
+	if mx < r.X+e.GutterWidth() || mx >= r.X+r.W || my < r.Y || my >= r.Y+r.H {
+		return 0, 0, false
+	}
+	row := e.rowAt(my - r.Y)
+	if row.isPhantom() || row.bufLine < 0 || row.bufLine >= len(e.Buf.Lines) {
+		return 0, 0, false
+	}
+	line, col = e.mouseToPos(r, mx, my)
+	end := len([]rune(e.Buf.Lines[line]))
+	if next := e.rowAt(my - r.Y + 1); e.WordWrap && !next.isPhantom() && next.bufLine == line && next.startCol > row.startCol {
+		end = next.startCol
+	}
+	return line, col, col < end
+}
+
 func (e *EditorPaneWidget) mouseToPos(r Rect, mx, my int) (line, col int) {
 	if len(e.Buf.Lines) == 0 {
 		return 0, 0
