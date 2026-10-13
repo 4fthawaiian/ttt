@@ -10,6 +10,7 @@ type Range struct {
 type State struct {
 	ranges    []Range
 	collapsed map[int]bool
+	pending   func() []Range
 
 	dirty          bool
 	cachedVisible  []int
@@ -35,7 +36,24 @@ func (s *State) SetRanges(ranges []Range) {
 	}
 	s.ranges = ranges
 	s.collapsed = keep
+	s.pending = nil
 	s.dirty = true
+}
+
+// SetPending defers computing the ranges until Resolve, unless SetRanges
+// supplies them first. Until then the state has no ranges.
+func (s *State) SetPending(compute func() []Range) {
+	s.pending = compute
+}
+
+func (s *State) Pending() bool {
+	return s.pending != nil
+}
+
+func (s *State) Resolve() {
+	if s.pending != nil {
+		s.SetRanges(s.pending())
+	}
 }
 
 func (s *State) Toggle(line int) {
@@ -113,10 +131,9 @@ func (s *State) HasCollapsedFolds() bool {
 }
 
 func (s *State) FoldAt(line int) *Range {
-	for i := range s.ranges {
-		if s.ranges[i].StartLine == line {
-			return &s.ranges[i]
-		}
+	i := sort.Search(len(s.ranges), func(i int) bool { return s.ranges[i].StartLine >= line })
+	if i < len(s.ranges) && s.ranges[i].StartLine == line {
+		return &s.ranges[i]
 	}
 	return nil
 }
