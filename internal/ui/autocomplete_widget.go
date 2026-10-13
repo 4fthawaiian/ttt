@@ -96,32 +96,59 @@ type CompletionItem struct {
 }
 
 func FilterCompletions(items []CompletionItem, prefix string) []CompletionItem {
-	if prefix == "" {
-		return items
-	}
 	lowerPrefix := strings.ToLower(prefix)
-	var filtered []CompletionItem
+	filtered := make([]CompletionItem, 0, len(items))
 	for _, it := range items {
-		ft := it.FilterText
-		if ft == "" {
-			ft = it.Label
-		}
-		if strings.HasPrefix(strings.ToLower(ft), lowerPrefix) {
+		if strings.HasPrefix(strings.ToLower(completionFilterText(it)), lowerPrefix) {
 			filtered = append(filtered, it)
 		}
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
-		si := filtered[i].SortText
-		if si == "" {
-			si = filtered[i].Label
-		}
-		sj := filtered[j].SortText
-		if sj == "" {
-			sj = filtered[j].Label
-		}
-		return si < sj
+		return completionLess(filtered[i], filtered[j], prefix)
 	})
 	return filtered
+}
+
+func completionFilterText(it CompletionItem) string {
+	if it.FilterText != "" {
+		return it.FilterText
+	}
+	return it.Label
+}
+
+func completionSortKey(it CompletionItem) string {
+	if it.SortText != "" {
+		return it.SortText
+	}
+	return it.Label
+}
+
+// completionLess keeps the server's sortText ranking and breaks ties by how
+// well each item matches what was typed.
+func completionLess(a, b CompletionItem, prefix string) bool {
+	ka, kb := completionSortKey(a), completionSortKey(b)
+	if a.SortText == "" && b.SortText == "" {
+		// Label fallback: compare without case so "String" and "string" tie
+		// and fall through to the tie-breaks below.
+		ka, kb = strings.ToLower(ka), strings.ToLower(kb)
+	}
+	if ka != kb {
+		return ka < kb
+	}
+	if prefix != "" {
+		ca := strings.HasPrefix(completionFilterText(a), prefix)
+		cb := strings.HasPrefix(completionFilterText(b), prefix)
+		if ca != cb {
+			return ca
+		}
+	}
+	if la, lb := len(a.Label), len(b.Label); la != lb {
+		return la < lb
+	}
+	if la, lb := strings.ToLower(a.Label), strings.ToLower(b.Label); la != lb {
+		return la < lb
+	}
+	return a.Label < b.Label
 }
 
 type AutocompleteWidget struct {
