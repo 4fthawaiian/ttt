@@ -86,6 +86,17 @@ func (a *App) scheduleHover(path, lang string, line, col, anchorX, anchorY int, 
 	}
 }
 
+func joinHoverText(diagnostic, text string) string {
+	switch {
+	case diagnostic == "":
+		return text
+	case text == "":
+		return diagnostic
+	default:
+		return diagnostic + "\n\n---\n\n" + text
+	}
+}
+
 func readHover(ctx context.Context, key hoverKey) (string, error) {
 	text := ""
 	if key.Server != "" {
@@ -108,14 +119,7 @@ func readHover(ctx context.Context, key hoverKey) (string, error) {
 			}
 		}
 	}
-	if key.Diagnostic != "" {
-		if text != "" {
-			text = key.Diagnostic + "\n---\n" + text
-		} else {
-			text = key.Diagnostic
-		}
-	}
-	return text, nil
+	return joinHoverText(key.Diagnostic, text), nil
 }
 
 func (a *App) stopHoverTask() {

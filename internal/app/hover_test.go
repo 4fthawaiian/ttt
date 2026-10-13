@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/eugenioenko/ttt/internal/config"
 	"github.com/eugenioenko/ttt/internal/core/undo"
 	"github.com/eugenioenko/ttt/internal/lsp"
+	"github.com/eugenioenko/ttt/internal/markdown"
 	"github.com/eugenioenko/ttt/internal/ui"
 )
 
@@ -146,5 +148,48 @@ func TestHoverHeadlessEmptyReplyClearsPreviousPopup(t *testing.T) {
 	a.RequestHover(a.EditorGroup.ActiveFilePath(), "plaintext", 0, 1, 8, 4, "")
 	if a.EditorGroup.Hover != nil {
 		t.Fatal("empty headless reply retained old hover")
+	}
+}
+
+func TestJoinHoverTextSeparatesDiagnosticWithDivider(t *testing.T) {
+	rendered := markdown.Render(joinHoverText("declared and not used: x", "var x int"))
+	nonBlank := make([]markdown.Line, 0, len(rendered))
+	for _, line := range rendered {
+		if line.Kind != markdown.KindBlank {
+			nonBlank = append(nonBlank, line)
+		}
+	}
+	if len(nonBlank) < 3 {
+		t.Fatalf("expected diagnostic, divider, and hover lines, got %d", len(nonBlank))
+	}
+	if nonBlank[0].Kind != markdown.KindParagraph || nonBlank[0].Text() != "declared and not used: x" {
+		t.Fatalf("diagnostic rendered as %#v %q", nonBlank[0].Kind, nonBlank[0].Text())
+	}
+	foundDivider := false
+	for _, line := range nonBlank {
+		if line.Kind == markdown.KindDivider {
+			foundDivider = true
+		}
+		if line.Kind == markdown.KindHeading {
+			t.Fatal("diagnostic was rendered as a heading")
+		}
+	}
+	if !foundDivider {
+		t.Fatal("diagnostic and hover text were not separated by a divider")
+	}
+	if !strings.Contains(nonBlank[len(nonBlank)-1].Text(), "var x int") {
+		t.Fatalf("hover text missing from final line: %q", nonBlank[len(nonBlank)-1].Text())
+	}
+	for _, tc := range []struct {
+		name, diagnostic, text, want string
+	}{
+		{name: "diagnostic only", diagnostic: "diagnostic", want: "diagnostic"},
+		{name: "hover only", text: "hover", want: "hover"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := joinHoverText(tc.diagnostic, tc.text); got != tc.want {
+				t.Fatalf("joinHoverText(%q, %q) = %q, want %q", tc.diagnostic, tc.text, got, tc.want)
+			}
+		})
 	}
 }
