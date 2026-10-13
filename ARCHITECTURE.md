@@ -76,14 +76,18 @@ have explicit cancellation, identity, shutdown, and stale-result behavior.
 ### Presentation kernel
 
 Packages: `internal/term`, `internal/render`, `internal/view`,
-`internal/textwidth`, `internal/widgets`, `internal/markdown`, and
-`internal/highlight`.
+`internal/textwidth`, `internal/widgets`, `internal/markdown`,
+`internal/highlight`, and `internal/asynctask`.
 
 Owns screen cells, styles, terminal-width measurement, rendering, layout,
 focus, scrolling, reusable interaction primitives, and syntax-to-style
 projection. `internal/widgets` contains primitives with more than one product
 or plugin consumer; it is not a destination for every visually reusable
 product surface.
+
+`internal/asynctask` provides terminal-independent scheduling with injected
+execution and delivery. Product widgets may use it directly; the application
+owns service coordination and task shutdown.
 
 `tcell` is the accepted event and terminal implementation dependency for this
 zone. Replacing it with one-for-one local event wrappers would add indirection
@@ -112,6 +116,10 @@ structs while unrelated methods continue to mutate them is not decomposition.
 
 Application code may route `tcell` events where it composes the event loop and
 UI, but new feature state should not depend directly on terminal event types.
+
+`app.NewTask` registers tasks for shutdown. `App.Init` wires UI delivery for
+both existing and future tasks. Uninitialized/headless Apps execute tasks
+synchronously, including the E2E simulation harness.
 
 ### Plugin host
 

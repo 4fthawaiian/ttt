@@ -45,6 +45,7 @@ func RunEventLoop(
 	if app.Repository != nil {
 		defer app.Repository.Close()
 	}
+	defer app.CloseTasks()
 
 	lastBlameLine := -1
 	lastBlameFile := ""
@@ -317,6 +318,8 @@ func RunEventLoop(
 			var execErr error
 			skipRedraw := false
 			switch v := tev.Data().(type) {
+			case *taskDelivery:
+				v.run()
 			case *highlightStep:
 				// Short steps keep input responsive while a large file catches up;
 				// the frame is redrawn once the deferred lines are ready.
