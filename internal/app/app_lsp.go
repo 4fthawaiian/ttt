@@ -5,12 +5,12 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/eugenioenko/ttt/internal/config"
-	"github.com/eugenioenko/ttt/internal/core/buffer"
 	"github.com/eugenioenko/ttt/internal/core/undo"
 	"github.com/eugenioenko/ttt/internal/lsp"
 	"github.com/eugenioenko/ttt/internal/ui"
@@ -56,13 +56,16 @@ func (a *App) RefreshAutocomplete() {
 	a.EditorGroup.Autocomplete.SetItems(filtered)
 }
 
+// isCompletionTrigger reports whether ch is a completion trigger character of
+// the active file's language server. Each server has its own: a space that
+// triggers TypeScript completions must not open them in Go.
 func (a *App) isCompletionTrigger(ch string) bool {
-	for _, tc := range a.CompletionTriggers {
-		if ch == tc {
-			return true
-		}
+	if ch == "" {
+		return false
 	}
-	return false
+	path, lang := a.editorPathLang()
+	serverKey, _, ok := a.lspResolve(path, lang)
+	return ok && slices.Contains(a.LspManager.CompletionTriggerCharacters(serverKey), ch)
 }
 
 func (a *App) identStart() (line, start, col int) {
@@ -100,52 +103,6 @@ func (a *App) currentPrefix() string {
 		return ""
 	}
 	return string(runes[start:col])
-}
-
-// completionMark records the buffer state when the user closed the popup.
-// The debounced auto-suggest and a request already in flight would otherwise
-// reopen it for the word at the cursor: after accepting, Enter would accept
-// that word again instead of breaking the line, and Escape would not stick.
-type completionMark struct {
-	buf     *buffer.Buffer
-	version uint64
-}
-
-// CloseAutocomplete dismisses the popup on the user's behalf, keeping it
-// closed until the buffer changes again.
-func (a *App) CloseAutocomplete() {
-	a.DismissAutocomplete()
-	if buf := a.EditorGroup.ActiveBuffer(); buf != nil {
-		a.completionClosed = completionMark{buf: buf, version: buf.Version()}
-	}
-}
-
-// completionClosedHere reports whether the active buffer is unchanged since the
-// user closed the popup.
-func (a *App) completionClosedHere() bool {
-	buf := a.EditorGroup.ActiveBuffer()
-	return buf != nil && buf == a.completionClosed.buf && buf.Version() == a.completionClosed.version
-}
-
-// HandleAutocompleteTrigger requests completions when the debounced
-// auto-suggest fires.
-func (a *App) HandleAutocompleteTrigger() {
-	if a.completionClosedHere() {
-		return
-	}
-	triggerChar := a.charBeforeCursor()
-	isTrigger := triggerChar != "" && (len(a.CompletionTriggers) == 0 || a.isCompletionTrigger(triggerChar))
-	if isTrigger && a.IsAutocompleteActive() {
-		a.DismissAutocomplete()
-	}
-	if a.IsAutocompleteActive() {
-		return
-	}
-	if prefix := a.currentPrefix(); len(prefix) >= 1 || isTrigger {
-		path, lang := a.editorPathLang()
-		line, col := a.EditorGroup.ActiveCursor()
-		a.RequestCompletions(path, lang, line, col, triggerChar)
-	}
 }
 
 func (a *App) DismissAutocomplete() {
@@ -276,19 +233,6 @@ func (a *App) insertCompletion(item ui.CompletionItem, textEdit *lsp.TextEdit) {
 	editor.FlushOnChange()
 }
 
-func (a *App) ScheduleAutocomplete() {
-	if !a.Settings.Autocomplete.Enabled || !a.Settings.Autocomplete.AutoSuggest {
-		return
-	}
-	if a.AutocompleteTimer != nil {
-		a.AutocompleteTimer.Stop()
-	}
-	delay := time.Duration(a.Settings.Autocomplete.Debounce) * time.Millisecond
-	a.AutocompleteTimer = time.AfterFunc(delay, func() {
-		a.Screen.PostEvent(tcell.NewEventInterrupt(&AutocompleteTrigger{}))
-	})
-}
-
 func (a *App) charBeforeCursor() string {
 	if !a.EditorGroup.IsEditorActive() {
 		return ""
@@ -348,45 +292,9 @@ func (a *App) CheckSignatureHelpTrigger(changeDone <-chan struct{}) {
 	}
 }
 
-// changeDone, if non-nil, is awaited first so the request lands after the
-// didChange notification for the same edit.
-func (a *App) RequestSignatureHelp(path, lang string, line, col int, changeDone <-chan struct{}) {
-	serverKey, _, ok := a.lspResolve(path, lang)
-	if !ok {
-		return
-	}
-	workDir := a.lspWorkDir(path)
-	go func() {
-		if changeDone != nil {
-			<-changeDone
-		}
-		client, err := a.LspManager.ClientForLanguage(serverKey, workDir)
-		if err != nil {
-			slog.Error("lsp client", "err", err)
-			return
-		}
-		sig, err := client.SignatureHelp(FileURI(path), line, col)
-		if err != nil {
-			slog.Error("lsp signatureHelp", "err", err)
-			return
-		}
-		if sig != nil && len(sig.Signatures) > 0 {
-			result := LspToSignatureHelpResult(sig)
-			if result.Label != "" {
-				slog.Debug("lsp signature help response", "label", result.Label)
-				a.Screen.PostEvent(tcell.NewEventInterrupt(result))
-			}
-		}
-	}()
-}
-
 func (a *App) ShowSignatureHelp(result *SignatureHelpResult) {
 	w := ui.NewSignatureHelpWidget(result.Label, result.ParamStart, result.ParamEnd)
 	a.EditorGroup.SignatureHelp = w
-}
-
-func (a *App) DismissSignatureHelp() {
-	a.EditorGroup.SignatureHelp = nil
 }
 
 func (a *App) editorTabSize() (int, bool) {
@@ -830,51 +738,6 @@ func (a *App) lspResolve(path, lang string) (serverKey, languageID string, ok bo
 		return "", "", false
 	}
 	return a.LspManager.ResolveLanguage(path, lang)
-}
-
-func (a *App) RequestCompletions(path, lang string, line, col int, triggerChar string) {
-	serverKey, _, ok := a.lspResolve(path, lang)
-	if !ok {
-		return
-	}
-	workDir := a.lspWorkDir(path)
-	go func() {
-		client, err := a.LspManager.ClientForLanguage(serverKey, workDir)
-		if err != nil {
-			slog.Error("lsp client", "err", err)
-			return
-		}
-		var ctx *lsp.CompletionContext
-		if triggerChar != "" {
-			for _, tc := range client.CompletionTriggerCharacters() {
-				if triggerChar == tc {
-					ctx = &lsp.CompletionContext{
-						TriggerKind:      lsp.CompletionTriggerTriggerCharacter,
-						TriggerCharacter: triggerChar,
-					}
-					break
-				}
-			}
-		}
-		if ctx == nil {
-			ctx = &lsp.CompletionContext{TriggerKind: lsp.CompletionTriggerInvoked}
-		}
-		slog.Debug("lsp completion request", "path", path, "line", line, "col", col, "triggerChar", triggerChar)
-		items, err := client.Completion(FileURI(path), line, col, ctx)
-		if err != nil {
-			slog.Error("lsp completion", "err", err)
-			return
-		}
-		slog.Debug("lsp completion response", "count", len(items))
-		uiItems := LspToUICompletions(items)
-		if len(uiItems) > 0 {
-			a.Screen.PostEvent(tcell.NewEventInterrupt(&CompletionResult{
-				Items:        uiItems,
-				LspItems:     items,
-				TriggerChars: client.CompletionTriggerCharacters(),
-			}))
-		}
-	}()
 }
 
 func (a *App) RequestDefinition(path, lang string, line, col int) {
