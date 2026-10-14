@@ -6,7 +6,8 @@
     "chevrons": {
       "collapsed": "▶",
       "expanded": "▼"
-    }
+    },
+    "scrollbarGlyphs": "blocks"
   },
   "editor": {
     "tabSize": 4,
@@ -21,6 +22,7 @@
     "diffSignsColor": true,
     "diffGutterHighlight": true,
     "diffColorGutterNumbers": false,
+    "diffScrollbarGitMarks": false,
     "lineNumbers": true,
     "formatOnSave": false,
     "insertFinalNewline": true,

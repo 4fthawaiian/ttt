@@ -44,6 +44,8 @@ type EditorPaneWidget struct {
 	UseTabs                 bool
 	LineNumbers             bool
 	GutterStyle             string
+	LegacyScrollbarGlyphs   bool
+	ScrollbarGitMarks       bool
 	FoldChevronCollapsed    rune
 	FoldChevronExpanded     rune
 	WordWrap                bool
@@ -122,6 +124,7 @@ func NewEditorPaneWidget(buf *buffer.Buffer, cur *cursor.Cursor, vp *view.Viewpo
 		Viewport:          vp,
 		AutoDedent:        true,
 		AutoIndent:        true,
+		ScrollbarGitMarks: true,
 		bracketColorDirty: true,
 	}
 }

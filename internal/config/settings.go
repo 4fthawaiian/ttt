@@ -10,23 +10,26 @@ import (
 
 // Validated by normalizeSettings and used to populate the settings UI pickers.
 var (
-	GutterStyles = []string{"minimal", "compact", "extended"}
-	BorderStyles = []string{"default", "theme", "rounded", "sharp", "double", "bold", "ascii", "none"}
-	DiffModes    = []string{"split", "unified"}
-	DiffContexts = []string{"changes", "full"}
-	GitFileViews = []string{"tree", "list"}
-	IconModes    = []string{IconsNerdFont, IconsNone}
+	GutterStyles        = []string{"minimal", "compact", "extended"}
+	BorderStyles        = []string{"default", "theme", "rounded", "sharp", "double", "bold", "ascii", "none"}
+	DiffModes           = []string{"split", "unified"}
+	DiffContexts        = []string{"changes", "full"}
+	GitFileViews        = []string{"tree", "list"}
+	IconModes           = []string{IconsNerdFont, IconsNone}
+	ScrollbarGlyphModes = []string{ScrollbarGlyphsBlocks, ScrollbarGlyphsLegacy}
 )
 
 const (
-	DiffModeSplit      = "split"
-	DiffModeUnified    = "unified"
-	DiffContextChanges = "changes"
-	DiffContextFull    = "full"
-	GitFileViewTree    = "tree"
-	GitFileViewList    = "list"
-	IconsNone          = "none"
-	IconsNerdFont      = "nerd-font"
+	DiffModeSplit         = "split"
+	DiffModeUnified       = "unified"
+	DiffContextChanges    = "changes"
+	DiffContextFull       = "full"
+	GitFileViewTree       = "tree"
+	GitFileViewList       = "list"
+	IconsNone             = "none"
+	IconsNerdFont         = "nerd-font"
+	ScrollbarGlyphsBlocks = "blocks"
+	ScrollbarGlyphsLegacy = "legacy"
 )
 
 type TerminalSettings struct {
@@ -107,6 +110,7 @@ type EditorSettings struct {
 	DiffSignsColor          bool             `json:"diffSignsColor"`
 	DiffGutterHighlight     bool             `json:"diffGutterHighlight"`
 	DiffColorGutterNumbers  bool             `json:"diffColorGutterNumbers"`
+	DiffScrollbarGitMarks   bool             `json:"diffScrollbarGitMarks"`
 	LineNumbers             bool             `json:"lineNumbers"`
 	CursorStyle             string           `json:"cursorStyle,omitempty"`
 	FormatOnSave            bool             `json:"formatOnSave"`
@@ -115,6 +119,7 @@ type EditorSettings struct {
 	FocusOnOpen             bool             `json:"focusOnOpen"`
 	SyntaxHighlight         *bool            `json:"syntaxHighlight,omitempty"`
 	GitGutter               *bool            `json:"gitGutter,omitempty"`
+	ScrollbarGitMarks       *bool            `json:"scrollbarGitMarks,omitempty"`
 	AutoDedent              *bool            `json:"autoDedent,omitempty"`
 	AutoIndent              *bool            `json:"autoIndent,omitempty"`
 	GutterStyle             string           `json:"gutterStyle,omitempty"`
@@ -149,6 +154,10 @@ func (e EditorSettings) IsSyntaxHighlightEnabled() bool {
 
 func (e EditorSettings) IsGitGutterEnabled() bool {
 	return e.GitGutter == nil || *e.GitGutter
+}
+
+func (e EditorSettings) IsScrollbarGitMarksEnabled() bool {
+	return e.ScrollbarGitMarks == nil || *e.ScrollbarGitMarks
 }
 
 func (e EditorSettings) IsAutoDedentEnabled() bool {
@@ -205,8 +214,9 @@ type ChevronSettings struct {
 }
 
 type AppearanceSettings struct {
-	Icons    string          `json:"icons"`
-	Chevrons ChevronSettings `json:"chevrons"`
+	Icons           string          `json:"icons"`
+	Chevrons        ChevronSettings `json:"chevrons"`
+	ScrollbarGlyphs string          `json:"scrollbarGlyphs"`
 }
 
 func DefaultAppearanceSettings() AppearanceSettings {
@@ -216,6 +226,7 @@ func DefaultAppearanceSettings() AppearanceSettings {
 			Collapsed: DefaultChevronCollapsed,
 			Expanded:  DefaultChevronExpanded,
 		},
+		ScrollbarGlyphs: ScrollbarGlyphsBlocks,
 	}
 }
 
@@ -457,6 +468,9 @@ func normalizeSettings(s *Settings) {
 	}
 	if !slices.Contains(IconModes, s.Appearance.Icons) {
 		s.Appearance.Icons = IconsNone
+	}
+	if !slices.Contains(ScrollbarGlyphModes, s.Appearance.ScrollbarGlyphs) {
+		s.Appearance.ScrollbarGlyphs = ScrollbarGlyphsBlocks
 	}
 }
 
