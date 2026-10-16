@@ -103,6 +103,8 @@ Available permissions include:
 | `events.editor` | Listen for buffer and cursor changes |
 | `settings` | Read/write editor settings |
 | `settings_keys` | Which settings keys the plugin can access (e.g. `formatters.*`) |
+| `storage` | Persist private plugin data |
+| `clipboard.read` | Read the system clipboard |
 
 ## Disabling the Plugin System
 
