@@ -105,3 +105,61 @@ func TestSaveAsNewPathDoesNotAsk(t *testing.T) {
 		t.Fatalf("expected the new file saved, got %q", got)
 	}
 }
+
+func TestSaveAsDanglingSymlinkAsksBeforeReplacing(t *testing.T) {
+	h := newTestHarness(t, 80, 24)
+	defer h.stop()
+
+	link := filepath.Join(h.dir, "link.txt")
+	if err := os.Symlink(filepath.Join(h.dir, "missing.txt"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	h.saveAsNewFile("scratch", link)
+
+	if len(h.app.Root.Overlays) != 1 {
+		t.Fatalf("expected a confirmation dialog, got %d overlays", len(h.app.Root.Overlays))
+	}
+	h.assertContains("already exists")
+	h.pressKey(tcell.KeyEnter, tcell.ModNone)
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("Cancel should leave the symlink in place, got %v, %v", info, err)
+	}
+}
+
+func TestSaveAsHardLinkToCurrentFileAsks(t *testing.T) {
+	h := newTestHarness(t, 80, 24)
+	defer h.stop()
+
+	path := filepath.Join(h.dir, "own.txt")
+	if err := os.WriteFile(path, []byte("own\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(h.dir, "alias.txt")
+	if err := os.Link(path, alias); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	h.app.EditorGroup.OpenFile(path)
+	h.redraw()
+	h.exec("file.saveAs")
+	h.redraw()
+	for range len(path) {
+		h.pressKey(tcell.KeyBackspace, tcell.ModNone)
+	}
+	h.typeText(alias)
+	h.pressKey(tcell.KeyEnter, tcell.ModNone)
+	h.redraw()
+
+	if len(h.app.Root.Overlays) != 1 {
+		t.Fatalf("expected a confirmation dialog for a hard link to the open file, got %d overlays", len(h.app.Root.Overlays))
+	}
+	h.assertContains("alias.txt already exists")
+	h.pressKey(tcell.KeyEnter, tcell.ModNone)
+	a, errA := os.Stat(path)
+	b, errB := os.Stat(alias)
+	if errA != nil || errB != nil || !os.SameFile(a, b) {
+		t.Fatal("Cancel should leave the hard link intact")
+	}
+	if h.app.EditorGroup.ActiveFilePath() != path {
+		t.Fatalf("tab path = %q, want %q", h.app.EditorGroup.ActiveFilePath(), path)
+	}
+}

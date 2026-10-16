@@ -207,16 +207,30 @@ func (a *App) saveFileAs(path string) {
 	}
 }
 
-// saveAsReplaces reports whether saving to path would overwrite a file other than current.
+// saveAsReplaces reports whether saving to path would replace an existing
+// entry other than the tab's own path. A dangling symlink counts, and so does
+// another name for the current file: saving renames over a hard link and
+// splits it from the original.
 func saveAsReplaces(current, path string) bool {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil || info.IsDir() {
 		return false
 	}
-	if cur, err := os.Stat(current); err == nil && os.SameFile(cur, info) {
-		return false
+	if info.Mode()&os.ModeSymlink != 0 {
+		if target, err := os.Stat(path); err == nil && target.IsDir() {
+			return false
+		}
 	}
-	return true
+	return current == "" || !samePath(current, path)
+}
+
+func samePath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return absA == absB
 }
 
 func (a *App) SaveFile() {
