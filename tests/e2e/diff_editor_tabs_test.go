@@ -124,6 +124,38 @@ func TestFindBarSearchesBothSidesOfADiffTab(t *testing.T) {
 	h.assertContains("1/2")
 }
 
+func TestDiffFindBarIsNotRefreshedByEditorTabChanges(t *testing.T) {
+	h := newTestHarness(t, 120, 30)
+	defer h.stop()
+	h.app.EditorGroup.OpenDiff(
+		"code.txt",
+		diff.FileDiff{},
+		[]string{"needle left", "needle old"},
+		[]string{"needle right", "needle new"},
+		true,
+	)
+	h.app.OpenFind()
+	for _, r := range "needle" {
+		h.pressRune(r)
+	}
+	h.pressKey(tcell.KeyEnter, tcell.ModNone)
+	findBar, ok := h.app.Root.TopOverlayWidget().(*ui.FindBarWidget)
+	if !ok || findBar.Current != 1 {
+		t.Fatalf("find bar current match = %v, want 1", findBar)
+	}
+
+	path := filepath.Join(h.dir, "other.txt")
+	if err := os.WriteFile(path, []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.app.EditorGroup.OpenFile(path)
+	h.redraw()
+
+	if findBar.Current != 1 {
+		t.Fatalf("diff find bar current match = %d after tab switch, want 1", findBar.Current)
+	}
+}
+
 func TestGlobalSearchNavigationScrollsADiffTab(t *testing.T) {
 	h := newTestHarness(t, 120, 20)
 	defer h.stop()

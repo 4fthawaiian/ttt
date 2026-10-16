@@ -14,19 +14,20 @@ type FindMatch struct {
 
 type FindBarWidget struct {
 	BaseWidget
-	Input      *InputWidget
-	Matches    []FindMatch
-	Current    int
-	Options    SearchOptions
-	Borders    *term.BorderSet
-	OnSearch   func(query string, opts SearchOptions) []FindMatch
-	OnNavigate func(match FindMatch)
-	OnDismiss  func()
-	Debounce   Debouncer
-	focused    bool
-	btnPrev    HitRegion
-	btnNext    HitRegion
-	btnClose   HitRegion
+	Input             *InputWidget
+	Matches           []FindMatch
+	Current           int
+	Options           SearchOptions
+	Borders           *term.BorderSet
+	OnSearch          func(query string, opts SearchOptions) []FindMatch
+	OnNavigate        func(match FindMatch)
+	OnEditorTabChange func()
+	OnDismiss         func()
+	Debounce          Debouncer
+	focused           bool
+	btnPrev           HitRegion
+	btnNext           HitRegion
+	btnClose          HitRegion
 }
 
 func NewFindBarWidget() *FindBarWidget {

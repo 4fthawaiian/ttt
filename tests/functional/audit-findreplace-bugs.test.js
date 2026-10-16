@@ -1,7 +1,5 @@
 // Repro tests for confirmed bugs from audit/2026-07-12-ux-bug-audit.md (branch audit/bug-hunt).
-// Each test asserts the CORRECT behavior and is declared with `it.fails`,
-// so it passes while the bug exists and goes red the moment the bug is
-// fixed — at that point remove the `.fails` marker and the audit entry.
+// Tests for fixed bugs assert correct behavior; remaining audit bugs use `it.fails`.
 import { describe, it, expect, afterEach } from "vitest";
 import * as tui from "./tui.js";
 import { createTempDir, createTempFile, cleanupDir, readFile } from "./helpers.js";
@@ -98,7 +96,7 @@ describe("BUG-012: Replace All is not a single undo step", () => {
 });
 
 describe("BUG-013: stale search follows tab switch", () => {
-  it.fails("find-next in a tab with no matches does not move the cursor", () => {
+  it("find-next in a tab with no matches does not move the cursor", () => {
     dir = createTempDir();
     const fileC = createTempFile(
       dir,
@@ -114,17 +112,177 @@ describe("BUG-013: stale search follows tab switch", () => {
     tui.press("ctrl+f");
     tui.type("alpha");
     tui.press("alt+."); // to tabD — no "alpha" anywhere in it
+    const switched = tui.snapshot();
     tui.press("f3"); // must be a no-op here
     tui.press("escape");
     tui.press("home");
     tui.type("Z");
 
     tui.press("ctrl+s");
-    tui.run();
+    const { snapshots } = tui.run();
+
+    expect(snapshots[switched]).toContain("0/0");
 
     // Buggy behavior: tabC's matches survive the switch, f3 clamps the
     // stale line-5 target into tabD and strands the cursor on line 1.
     expect(readFile(fileD)).toBe("Zshort\n");
+  });
+});
+
+describe("BUG-048: find-next uses active tab matches", () => {
+  it("recomputes matches after switching tabs with find open", () => {
+    dir = createTempDir();
+    const fileA = createTempFile(dir, "tabA.txt", "alpha first\none\ntwo\nalpha second\n");
+    const fileB = createTempFile(dir, "tabB.txt", "top\nalpha active\nbottom\n");
+
+    tui.start(fileA, fileB);
+    tui.waitFor("top");
+
+    tui.press("alt+,"); // to fileA
+    tui.press("ctrl+f");
+    tui.type("alpha");
+    tui.press("f3"); // select fileA's second match
+    tui.press("alt+."); // to fileB; find remains open
+    const switched = tui.snapshot();
+    tui.click(10, 4); // focus the editor without dismissing find
+    tui.press("f3"); // must use fileB's matches, not fileA's coordinates
+    tui.press("home");
+    tui.type("Z");
+
+    tui.press("ctrl+s");
+    const { snapshots } = tui.run();
+
+    expect(snapshots[switched]).toContain("1/1");
+    expect(readFile(fileB)).toBe("top\nZalpha active\nbottom\n");
+  });
+
+  it("continues to the next match after find closes on the same buffer", () => {
+    dir = createTempDir();
+    const file = createTempFile(dir, "sameTab.txt", "alpha first\nmiddle\nalpha second\nbottom\nalpha third\n");
+
+    tui.start(file);
+    tui.waitFor("alpha first");
+
+    tui.press("ctrl+f");
+    tui.type("alpha");
+    tui.press("f3");
+    tui.press("escape");
+    tui.press("f3");
+    tui.press("home");
+    tui.type("Z");
+
+    tui.press("ctrl+s");
+    tui.run();
+
+    expect(readFile(file)).toBe("alpha first\nmiddle\nalpha second\nbottom\nZalpha third\n");
+  });
+
+  it("reuses the last query after the find bar closes", () => {
+    dir = createTempDir();
+    const fileA = createTempFile(dir, "closedA.txt", "alpha first\none\ntwo\nalpha second\n");
+    const fileB = createTempFile(
+      dir,
+      "closedB.txt",
+      "top\nalpha active first\nmiddle\nalpha active second\nbottom\nalpha active third\n",
+    );
+
+    tui.start(fileA, fileB);
+    tui.waitFor("top");
+
+    tui.press("alt+,"); // to fileA
+    tui.press("ctrl+f");
+    tui.type("alpha");
+    tui.press("f3");
+    tui.press("escape"); // close find, but keep its query for F3
+    tui.press("alt+."); // to fileB
+    tui.press("f3");
+    tui.press("home");
+    tui.type("Z");
+
+    tui.press("ctrl+s");
+    tui.run();
+
+    expect(readFile(fileB)).toBe(
+      "top\nZalpha active first\nmiddle\nalpha active second\nbottom\nalpha active third\n",
+    );
+  });
+
+  it("starts at the last match for find-previous after switching tabs", () => {
+    dir = createTempDir();
+    const fileA = createTempFile(dir, "previousA.txt", "alpha one\nalpha two\n");
+    const fileB = createTempFile(
+      dir,
+      "previousB.txt",
+      "top\nalpha first\nmiddle\nalpha second\nbottom\nalpha third\n",
+    );
+
+    tui.start(fileA, fileB);
+    tui.waitFor("top");
+
+    tui.press("alt+,"); // to fileA
+    tui.press("ctrl+f");
+    tui.type("alpha");
+    tui.press("f3");
+    tui.press("escape");
+    tui.press("alt+."); // to fileB
+    tui.press("shift+f3");
+    tui.press("home");
+    tui.type("Z");
+
+    tui.press("ctrl+s");
+    tui.run();
+
+    expect(readFile(fileB)).toBe("top\nalpha first\nmiddle\nalpha second\nbottom\nZalpha third\n");
+  });
+
+  it("preserves case-sensitive regex options after closing find", () => {
+    dir = createTempDir();
+    const fileA = createTempFile(dir, "optionsA.txt", "alpha first\nalpha second\n");
+    const fileB = createTempFile(
+      dir,
+      "optionsB.txt",
+      "Alpha upper\nalpha 123\nalpha match\nalpha next\n",
+    );
+
+    tui.start(fileA, fileB);
+    tui.waitFor("Alpha upper");
+
+    tui.press("alt+,"); // to fileA
+    tui.press("ctrl+f");
+    tui.press("alt+c"); // case-sensitive
+    tui.press("alt+r"); // regex
+    tui.type("^alpha [a-z]+$");
+    tui.waitFor("1/2");
+    tui.press("f3");
+    tui.press("escape");
+    tui.press("alt+."); // to fileB
+    tui.press("f3");
+    tui.press("home");
+    tui.type("Z");
+
+    tui.press("ctrl+s");
+    tui.run();
+
+    expect(readFile(fileB)).toBe("Alpha upper\nalpha 123\nZalpha match\nalpha next\n");
+  });
+
+  it("refreshes the find count when the active tab closes", () => {
+    dir = createTempDir();
+    const fileA = createTempFile(dir, "closeA.txt", "alpha one\nalpha two\n");
+    const fileB = createTempFile(dir, "closeB.txt", "alpha active\n");
+
+    tui.start(fileA, fileB);
+    tui.waitFor("alpha active");
+
+    tui.press("alt+,"); // to fileA
+    tui.press("ctrl+f");
+    tui.type("alpha");
+    tui.waitFor("1/2");
+    tui.press("ctrl+w"); // close fileA; fileB becomes active
+    const switched = tui.snapshot();
+    const { snapshots } = tui.run();
+
+    expect(snapshots[switched]).toContain("1/1");
   });
 });
 

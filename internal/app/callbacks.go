@@ -681,6 +681,12 @@ func registerWidgetCallbacks(app *App) {
 		app.Root.SetFocus(app.EditorGroup)
 	}
 
+	app.EditorGroup.OnActiveTabChange = func() {
+		if findBar, ok := app.Root.TopOverlayWidget().(*ui.FindBarWidget); ok && findBar.OnEditorTabChange != nil {
+			findBar.OnEditorTabChange()
+		}
+	}
+
 	app.EditorGroup.TabBar.OnTabClose = func(index int) {
 		app.EditorGroup.SwitchTab(index)
 		reg.Execute("tab.close")

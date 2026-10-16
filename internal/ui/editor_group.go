@@ -77,6 +77,14 @@ type editorTab struct {
 	Diff *DiffEditorWidget
 }
 
+// findSession keeps the editor query after its bar closes and tracks which buffer matches describe.
+type findSession struct {
+	query         string
+	options       SearchOptions
+	matchesBuffer *buffer.Buffer
+	activeMatch   int // Match index in matchesBuffer; -1 when no match is selected.
+}
+
 type EditorGroupWidget struct {
 	BaseWidget
 	TabBar          *TabBarWidget
@@ -130,7 +138,10 @@ type EditorGroupWidget struct {
 	OnFileHandled func(path string)
 	// OnEmpty fires after the last tab closes and the untitled placeholder
 	// takes its place.
-	OnEmpty func()
+	OnEmpty           func()
+	OnActiveTabChange func()
+	lastActiveTabID   string
+	lastActiveBuf     *buffer.Buffer
 	// EmptyStateID names a content tab that stands in for the placeholder:
 	// like it, it has no close button while it is the only tab.
 	EmptyStateID  string
@@ -138,6 +149,7 @@ type EditorGroupWidget struct {
 	OnNotify      func(msg string)
 	pendingNotify []string
 	focused       bool
+	find          findSession
 	// diagSources holds diagnostics keyed by source ("lsp:<server>", "plugin:<name>")
 	// then by file path. Merged per-path into each tab's Diagnostics.
 	diagSources map[string]map[string][]Diagnostic
@@ -1158,7 +1170,8 @@ func (g *EditorGroupWidget) SetUseTabs(useTabs bool) {
 
 func (g *EditorGroupWidget) SwitchTab(idx int) {
 	if idx >= 0 && idx < len(g.tabs) {
-		if idx != g.active && g.TabBar.OwnsPointerCapture() {
+		changed := idx != g.active
+		if changed && g.TabBar.OwnsPointerCapture() {
 			g.TabBar.CancelPointerCapture()
 		}
 		if t := g.activeTab(); t != nil && t.Content != nil {
@@ -1778,6 +1791,20 @@ func (g *EditorGroupWidget) SelectAll() {
 }
 
 func (g *EditorGroupWidget) SetSearch(query string, matches []FindMatch) {
+	g.find = findSession{}
+	g.applySearch(query, matches)
+}
+
+func (g *EditorGroupWidget) SetFindSearch(query string, matches []FindMatch, opts SearchOptions) {
+	g.find = findSession{query: query, options: opts, activeMatch: -1}
+	if !g.IsEditorActive() {
+		return
+	}
+	g.find.matchesBuffer = g.Editor.Buf
+	g.applySearch(query, matches)
+}
+
+func (g *EditorGroupWidget) applySearch(query string, matches []FindMatch) {
 	if !g.IsEditorActive() {
 		return
 	}
@@ -1792,6 +1819,9 @@ func (g *EditorGroupWidget) SetSearchActive(idx int) {
 		return
 	}
 	g.Editor.SearchActive = idx
+	if g.find.query != "" && g.find.matchesBuffer == g.Editor.Buf {
+		g.find.activeMatch = idx
+	}
 }
 
 // PlaceCursor moves the cursor to a 1-based line and column, clamping both to
@@ -1872,6 +1902,21 @@ func (g *EditorGroupWidget) ScrollToCursor() {
 }
 
 func (g *EditorGroupWidget) ClearSearch() {
+	g.find = findSession{}
+	g.clearSearchState()
+}
+
+func (g *EditorGroupWidget) ClearFindHighlights() {
+	if !g.IsEditorActive() {
+		return
+	}
+	active := g.Editor.SearchActive
+	g.clearSearchState()
+	g.Editor.SearchActive = active
+	g.find.activeMatch = active
+}
+
+func (g *EditorGroupWidget) clearSearchState() {
 	if !g.IsEditorActive() {
 		return
 	}
@@ -1879,6 +1924,34 @@ func (g *EditorGroupWidget) ClearSearch() {
 	g.Editor.SearchMatches = nil
 	g.Editor.SearchActive = 0
 	g.Editor.searchByLine = nil
+}
+
+func (g *EditorGroupWidget) refreshFindSearch() bool {
+	if !g.IsEditorActive() || g.find.query == "" ||
+		(g.find.matchesBuffer == g.Editor.Buf && g.Editor.SearchQuery == g.find.query) {
+		return false
+	}
+	matches, err := FindInLines(g.Editor.Buf.Lines, g.find.query, g.find.options)
+	if err != nil {
+		return false
+	}
+	bufferChanged := g.find.matchesBuffer != g.Editor.Buf
+	active := g.find.activeMatch
+	if bufferChanged {
+		active = -1
+	}
+	g.find.matchesBuffer = g.Editor.Buf
+	g.applySearch(g.find.query, matches)
+	if len(matches) == 0 {
+		g.find.activeMatch = -1
+	} else {
+		if active < 0 || active >= len(matches) {
+			active = 0
+		}
+		g.find.activeMatch = active
+		g.Editor.SearchActive = active
+	}
+	return bufferChanged
 }
 
 // PositionAt maps screen coordinates to a 0-based buffer line/col and the word
@@ -1994,12 +2067,19 @@ func (g *EditorGroupWidget) SetLineChanges(path string, changes []diff.LineChang
 }
 
 func (g *EditorGroupWidget) FindNext() {
-	if !g.IsEditorActive() || len(g.Editor.SearchMatches) == 0 {
+	if !g.IsEditorActive() {
+		return
+	}
+	refreshed := g.refreshFindSearch()
+	if len(g.Editor.SearchMatches) == 0 {
 		return
 	}
 	cur := g.Editor.SearchActive
+	if refreshed {
+		cur = -1
+	}
 	cur = (cur + 1) % len(g.Editor.SearchMatches)
-	g.Editor.SearchActive = cur
+	g.SetSearchActive(cur)
 	m := g.Editor.SearchMatches[cur]
 	g.Editor.ExpandFoldContaining(m.Line)
 	g.Editor.Cursor.Line = m.Line
@@ -2044,12 +2124,19 @@ func (g *EditorGroupWidget) ReplaceAll(query, replacement string, opts SearchOpt
 }
 
 func (g *EditorGroupWidget) FindPrev() {
-	if !g.IsEditorActive() || len(g.Editor.SearchMatches) == 0 {
+	if !g.IsEditorActive() {
+		return
+	}
+	refreshed := g.refreshFindSearch()
+	if len(g.Editor.SearchMatches) == 0 {
 		return
 	}
 	cur := g.Editor.SearchActive
+	if refreshed {
+		cur = 0
+	}
 	cur = (cur - 1 + len(g.Editor.SearchMatches)) % len(g.Editor.SearchMatches)
-	g.Editor.SearchActive = cur
+	g.SetSearchActive(cur)
 	m := g.Editor.SearchMatches[cur]
 	g.Editor.ExpandFoldContaining(m.Line)
 	g.Editor.Cursor.Line = m.Line
@@ -2423,6 +2510,13 @@ func (g *EditorGroupWidget) syncTabs() {
 		})
 	}
 	g.TabBar.SetTabs(uiTabs)
+	if g.lastActiveTabID != t.ID || g.lastActiveBuf != t.Buf {
+		g.lastActiveTabID = t.ID
+		g.lastActiveBuf = t.Buf
+		if g.OnActiveTabChange != nil {
+			g.OnActiveTabChange()
+		}
+	}
 }
 
 func (g *EditorGroupWidget) ensureTabIdentities() {
