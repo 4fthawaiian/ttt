@@ -105,6 +105,9 @@ type EditorPaneWidget struct {
 	// Embedded panes are drawn inside a host that owns scrolling, so they draw
 	// no scrollbars of their own.
 	Embedded bool
+	// Window places Buf.Lines inside a larger read-only document; nil for
+	// normal tabs.
+	Window *LineWindow
 	// NoWrapMargin wraps at the full text width; wrapCols caps it, so the
 	// two panes of a split diff wrap at the same column.
 	NoWrapMargin bool
@@ -147,7 +150,7 @@ func (e *EditorPaneWidget) GutterWidth() int {
 		}
 		return 0
 	}
-	digits := max(len(strconv.Itoa(len(e.Buf.Lines))), e.diffNumDigits, 2)
+	digits := max(len(strconv.Itoa(e.documentLines())), e.diffNumDigits, 2)
 	switch e.GutterStyle {
 	case "minimal":
 		return digits + 1

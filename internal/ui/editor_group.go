@@ -74,6 +74,7 @@ type editorTab struct {
 	Placeholder bool
 	LineChanges []diff.LineChangeKind
 	ReadOnly    bool
+	Window      *LineWindow
 	// Diff shows the tab's own buffer as an editable diff against its base.
 	Diff *DiffEditorWidget
 }
@@ -394,7 +395,7 @@ func (g *EditorGroupWidget) OpenFile(path string) {
 				g.SwitchTab(i)
 				return
 			}
-			if g.tabs[i].Buf != nil && !g.tabs[i].Buf.Dirty {
+			if g.tabs[i].Buf != nil && !g.tabs[i].Buf.Dirty && g.tabs[i].Window == nil {
 				g.tabs[i].Buf.LoadFile(path)
 			}
 			g.SwitchTab(i)
@@ -1723,6 +1724,9 @@ func (g *EditorGroupWidget) ActiveCursor() (line, col int) {
 	if t == nil || t.Content != nil {
 		return 0, 0
 	}
+	if t.Window != nil {
+		return t.Window.Start + t.Cur.Line, t.Cur.Col
+	}
 	return t.Cur.Line, t.Cur.Col
 }
 
@@ -1916,6 +1920,16 @@ func (g *EditorGroupWidget) PlaceCursor(line, col int) bool {
 }
 
 func (g *EditorGroupWidget) GoToLine(line int) {
+	if t := g.activeTab(); t != nil && t.Window != nil && t.Window.GoTo != nil {
+		t.Window.GoTo(line - 1)
+		return
+	}
+	g.GoToWindowLine(line)
+}
+
+// GoToWindowLine moves to a 1-based line of the active buffer, which for a
+// windowed tab is a line of the window, not of the document.
+func (g *EditorGroupWidget) GoToWindowLine(line int) {
 	if !g.PlaceCursor(line, 0) {
 		return
 	}
@@ -2514,6 +2528,13 @@ func (g *EditorGroupWidget) syncTabs() {
 			}
 			g.Editor.Bookmarks = g.bookmarksByPath[t.FilePath]
 			g.bookmarkSyncPath = t.FilePath
+		}
+		prevWindow := g.Editor.Window
+		g.Editor.Window = t.Window
+		if t.Window != nil {
+			g.Editor.WordWrap = false
+		} else if prevWindow != nil {
+			g.Editor.WordWrap = g.WordWrap
 		}
 		g.Editor.Buf = t.Buf
 		g.Editor.Cursor = t.Cur

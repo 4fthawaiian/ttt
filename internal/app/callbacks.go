@@ -750,6 +750,7 @@ func registerWidgetCallbacks(app *App) {
 		app.ExplorerContextNode = node
 		items := []ui.ContextMenuItem{
 			{Label: "Open", Command: "explorer.open"},
+			{Label: "Open in Log Mode", Command: "explorer.openInLogMode"},
 			ui.MenuSep(),
 			{Label: "New File", Command: "explorer.newFile"},
 			{Label: "New Folder", Command: "explorer.newFolder"},

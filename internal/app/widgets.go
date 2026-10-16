@@ -391,6 +391,7 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 		lspSent:             make(map[string]<-chan struct{}),
 		lspEpochs:           make(map[string]int),
 		lastPulled:          make(map[string]pullKey),
+		logViews:            make(map[string]*logView),
 		LspNotified:         make(map[string]bool),
 		pluginDetailWidgets: make(map[string]*pluginDetailState),
 	}

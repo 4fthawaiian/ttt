@@ -50,6 +50,7 @@ func RunEventLoop(
 
 	syncStatus := func() {
 		app.syncRepositoryObservation()
+		app.syncLogStatus()
 		line, col := app.EditorGroup.ActiveCursor()
 		filePath := app.EditorGroup.ActiveFilePath()
 		cursorCount := app.EditorGroup.MultiCursorCount()
@@ -194,6 +195,7 @@ func RunEventLoop(
 		}
 		slog.Debug("key", "key", tev.Key(), "rune", string(term.KeyRune(tev)), "mod", tev.Modifiers())
 		app.Root.HandleEvent(tev)
+		app.syncLogWindow()
 		app.FlushEditorOnChange()
 		app.RefreshAutocomplete()
 		syncStatus()
@@ -217,6 +219,7 @@ func RunEventLoop(
 			app.DismissHover()
 		}
 		app.Root.HandleEvent(tev)
+		app.syncLogWindow()
 		app.FlushEditorOnChange()
 		syncStatus()
 	}
@@ -283,6 +286,8 @@ func RunEventLoop(
 				if v != "" {
 					closeTerminal(v)
 				}
+			case *LogFileProgress:
+				app.handleLogProgress(v)
 			case *ui.TabDragAutoScrollTick:
 				app.EditorGroup.TabBar.HandleDragAutoScrollTick(v.Generation)
 			case *ui.EditorDragAutoScrollTick:

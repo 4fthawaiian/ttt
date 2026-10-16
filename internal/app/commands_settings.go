@@ -108,7 +108,9 @@ func (a *App) ApplySettings(s config.Settings) {
 		a.EditorGroup.Editor.ScrollbarGitMarks = s.Editor.IsScrollbarGitMarksEnabled()
 		a.EditorGroup.Editor.AutoDedent = s.Editor.IsAutoDedentEnabled()
 		a.EditorGroup.Editor.AutoIndent = s.Editor.IsAutoIndentEnabled()
-		a.EditorGroup.Editor.WordWrap = s.Editor.WordWrap
+		if a.EditorGroup.Editor.Window == nil {
+			a.EditorGroup.Editor.WordWrap = s.Editor.WordWrap
+		}
 		a.EditorGroup.Editor.BracketPairColorization = s.Editor.BracketPairColorization
 		if s.Editor.BracketPairColorization != prev.Editor.BracketPairColorization {
 			a.EditorGroup.Editor.InvalidateBracketColors()

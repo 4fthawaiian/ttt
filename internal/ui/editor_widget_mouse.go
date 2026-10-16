@@ -157,7 +157,11 @@ func (e *EditorPaneWidget) handleMouse(mev *tcell.EventMouse) EventResult {
 
 func (e *EditorPaneWidget) handleScrollbarMouse(mev *tcell.EventMouse) (EventResult, bool) {
 	if newTop, consumed := e.scrollbar.HandleEvent(mev); consumed {
-		e.setTopRow(e.layout(), newTop)
+		if e.Window != nil && e.Window.ScrollTo != nil {
+			e.Window.ScrollTo(newTop)
+		} else {
+			e.setTopRow(e.layout(), newTop)
+		}
 		if e.scrollbar.IsDragging() {
 			return EventCaptured, true
 		}

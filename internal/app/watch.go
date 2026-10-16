@@ -50,7 +50,7 @@ func (a *App) SyncWatched() {
 	if a.Watcher == nil {
 		return
 	}
-	a.Watcher.Sync(a.EditorGroup.OpenFilePaths())
+	a.Watcher.Sync(append(a.EditorGroup.OpenFilePaths(), a.logPaths()...))
 	if a.Explorer != nil {
 		a.Watcher.SyncDirs(a.Explorer.WatchedDirs())
 	}
@@ -63,6 +63,10 @@ func (a *App) SyncWatched() {
 // updated, so the save-time conflict check keeps working.
 func (a *App) HandleFileChanged(path string) {
 	a.invalidateRepositoryPath(path, RepositoryWorktree)
+	if lv := a.logViews[path]; lv != nil {
+		lv.file.Refresh()
+		return
+	}
 	buf := a.EditorGroup.BufferForPath(path)
 	if buf == nil {
 		return

@@ -713,6 +713,16 @@ func registerEditorCommands(app *App) {
 		Keywords: []string{"file", "write", "export"},
 		Handler:  app.SaveFileAs,
 	})
+	reg.Register(command.Command{
+		ID: "file.openInLogMode", Title: "Open in Log Mode",
+		Keywords: []string{"file", "log", "tail", "follow", "large"},
+		Handler:  app.OpenActiveInLogMode,
+	})
+	reg.Register(command.Command{
+		ID: "explorer.openInLogMode", Title: "Explorer: Open in Log Mode",
+		Keywords: []string{"file", "log", "tail", "follow", "large"},
+		Handler:  app.ExplorerOpenInLogMode,
+	})
 
 	reg.Register(command.Command{
 		ID: "editor.undo", Title: "Undo",
