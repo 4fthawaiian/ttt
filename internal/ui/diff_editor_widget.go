@@ -193,6 +193,14 @@ func (d *DiffEditorWidget) viewPanes() []*EditorPaneWidget {
 	return d.panes()
 }
 
+func (d *DiffEditorWidget) SetFilePath(path string) {
+	if d.FilePath == path {
+		return
+	}
+	d.FilePath = path
+	d.attachHighlighters()
+}
+
 // attachHighlighters drops the panes' highlighters; Render creates them for
 // the panes it draws, since loading a grammar is costly.
 func (d *DiffEditorWidget) attachHighlighters() {

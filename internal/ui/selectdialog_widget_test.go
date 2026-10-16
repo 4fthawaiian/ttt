@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/eugenioenko/ttt/internal/command"
 	"github.com/eugenioenko/ttt/internal/config"
+	"github.com/eugenioenko/ttt/internal/fileicons"
 	"github.com/eugenioenko/ttt/internal/term"
 
 	"github.com/gdamore/tcell/v3"
@@ -44,6 +47,49 @@ func testCommands() []command.Command {
 		{ID: "file.open", Title: "File: Open"},
 		{ID: "editor.split", Title: "Split Editor Right"},
 		{ID: "sidebar.toggle", Title: "View: Toggle Sidebar"},
+	}
+}
+
+func TestPaletteFileResultsShowThemedIconsWithoutChangingLabels(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewSelectDialogWidget(nil)
+	p.SetFiles([]string{dir})
+	p.Icons = config.IconsNerdFont
+	p.Input.SetText("")
+	p.Items = append(p.Items, PaletteItem{Label: "other.txt", ID: filepath.Join(dir, "other.txt")})
+	p.Selected = 1
+
+	grid := makeGrid(80, 24)
+	p.Render(NewRenderSurface(grid, Rect{W: 80, H: 24}))
+	row := grid[p.boxY+3]
+	icon := []rune(fileicons.ForFile("Dockerfile").Glyph)[0]
+	if row[p.boxX+2].Ch != icon || row[p.boxX+2].Style != term.StyleFileIconBlue {
+		t.Fatalf("palette file icon = %+v, want Dockerfile blue icon", row[p.boxX+2])
+	}
+	if p.Items[0].Label != "Dockerfile" || p.Items[0].ID != path {
+		t.Fatalf("icon changed file result identity: %+v", p.Items[0])
+	}
+
+	p.Icons = config.IconsNone
+	p.Render(NewRenderSurface(grid, Rect{W: 80, H: 24}))
+	if got := grid[p.boxY+3][p.boxX+2].Ch; got != 'D' {
+		t.Fatalf("filename starts at %q with icons disabled, want D", got)
+	}
+}
+
+func TestPaletteIconsDoNotDecorateCommandMode(t *testing.T) {
+	p := NewSelectDialogWidget(testCommands())
+	p.Icons = config.IconsNerdFont
+	p.Input.SetText(">")
+	grid := makeGrid(80, 24)
+	p.Render(NewRenderSurface(grid, Rect{W: 80, H: 24}))
+
+	if got := grid[p.boxY+3][p.boxX+2].Ch; got != 'F' {
+		t.Fatalf("command label starts with %q, want F without file icon", got)
 	}
 }
 

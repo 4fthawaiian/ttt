@@ -76,7 +76,7 @@ func (a *App) ApplySettings(s config.Settings) {
 	highlight.SetTimeLimit(time.Duration(s.Editor.HighlightTimeLimit) * time.Millisecond)
 	// Apply editor settings to the editor group and active editor
 	a.EditorGroup.TabSize = s.Editor.TabSize
-	a.EditorGroup.TabBar.Icons = s.Appearance.Icons
+	a.EditorGroup.SetFileIconMode(s.Appearance.Icons)
 	a.EditorGroup.InsertSpaces = s.Editor.InsertSpaces
 	a.EditorGroup.LineNumbers = s.Editor.LineNumbers
 	a.EditorGroup.GutterStyle = s.Editor.GutterStyle
@@ -124,6 +124,7 @@ func (a *App) ApplySettings(s config.Settings) {
 
 	// Apply search debounce
 	a.Search.Debounce.DelayMs = s.Search.Debounce
+	a.Search.Icons = s.Appearance.Icons
 	if s.LSP.IsHoverEnabled() != prev.LSP.IsHoverEnabled() || s.LSP.IsEnabled() != prev.LSP.IsEnabled() {
 		a.DismissHover()
 	}

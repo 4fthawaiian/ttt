@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/eugenioenko/ttt/internal/core/diff"
 )
 
 // newRenameGroup returns a group with one tab open on a real file at path.
@@ -33,9 +35,104 @@ func TestRenamePathUpdatesOpenTab(t *testing.T) {
 	}
 }
 
+func TestRenamePathUpdatesFileViewerTabAndContent(t *testing.T) {
+	tmp := t.TempDir()
+	old := filepath.Join(tmp, "image.bin")
+	if err := os.WriteFile(old, []byte{0, 1, 2}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	viewer := NewBinaryFileWidget(old)
+	g := NewEditorGroupWidget(nil, 4, false, "extended")
+	g.openContentFileTab(old, viewer)
+
+	newPath := filepath.Join(tmp, "renamed.bin")
+	if err := os.Rename(old, newPath); err != nil {
+		t.Fatal(err)
+	}
+	if !g.RenamePath(old, newPath) {
+		t.Fatal("expected RenamePath to report a content-tab change")
+	}
+	if got := g.tabs[g.active].IconPath; got != newPath {
+		t.Fatalf("content-tab icon path: got %q, want %q", got, newPath)
+	}
+	if got := g.tabs[g.active].FilePath; got != newPath {
+		t.Fatalf("content-tab path: got %q, want %q", got, newPath)
+	}
+	if got := viewer.FilePath; got != newPath || viewer.Err != "" {
+		t.Fatalf("viewer path/error = %q/%q, want %q/empty", got, viewer.Err, newPath)
+	}
+	if got := filepath.Base(g.TabBar.Tabs[g.active].Name); got != filepath.Base(newPath) {
+		t.Fatalf("visible tab name: got %q, want %q", got, filepath.Base(newPath))
+	}
+}
+
 // The reported bug: after a rename the tab kept the old path, so saving wrote
 // the buffer back to the name it had been renamed away from, leaving a ghost
 // duplicate on disk alongside the renamed file.
+func TestRenamePathUpdatesInlineDiffFilePath(t *testing.T) {
+	tmp := t.TempDir()
+	old := filepath.Join(tmp, "file.txt")
+	g := newRenameGroup(t, old, "package main")
+	if !g.EnableInlineDiff(old, []string{"package main"}) {
+		t.Fatal("could not enable inline diff")
+	}
+
+	newPath := filepath.Join(tmp, "file.go")
+	if err := os.Rename(old, newPath); err != nil {
+		t.Fatal(err)
+	}
+	if !g.RenamePath(old, newPath) {
+		t.Fatal("expected RenamePath to report a tab change")
+	}
+	if got := g.tabs[g.active].Diff.FilePath; got != newPath {
+		t.Fatalf("inline diff path: got %q, want %q", got, newPath)
+	}
+}
+
+func TestRenamePathUpdatesImageViewerContent(t *testing.T) {
+	tmp := t.TempDir()
+	old := filepath.Join(tmp, "image.png")
+	writeTestPNG(t, old, 4, 4)
+	g := NewEditorGroupWidget(nil, 4, false, "extended")
+	g.OpenFile(old)
+
+	newPath := filepath.Join(tmp, "renamed.png")
+	if err := os.Rename(old, newPath); err != nil {
+		t.Fatal(err)
+	}
+	if !g.RenamePath(old, newPath) {
+		t.Fatal("expected RenamePath to report an image-tab change")
+	}
+	viewer, ok := g.tabs[g.active].Content.(*ImageViewWidget)
+	if !ok {
+		t.Fatalf("content = %T, want image viewer", g.tabs[g.active].Content)
+	}
+	if viewer.FilePath != newPath || viewer.Err != "" {
+		t.Fatalf("image viewer path/error = %q/%q, want %q/empty", viewer.FilePath, viewer.Err, newPath)
+	}
+}
+
+func TestRenamePathUpdatesDiffTabFileIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	old := filepath.Join(tmp, "old.go")
+	g := NewEditorGroupWidget(nil, 4, false, "extended")
+	g.OpenDiff(old, diff.FileDiff{}, []string{"old"}, []string{"new"}, false)
+
+	newPath := filepath.Join(tmp, "renamed.go")
+	if !g.RenamePath(old, newPath) {
+		t.Fatal("expected RenamePath to report a diff-tab change")
+	}
+	if got := g.tabs[g.active].FilePath; got != newPath+" (diff)" {
+		t.Fatalf("diff tab identity: got %q, want %q", got, newPath+" (diff)")
+	}
+	if got := g.tabs[g.active].IconPath; got != newPath {
+		t.Fatalf("diff tab icon path: got %q, want %q", got, newPath)
+	}
+	if got := g.ActiveDiffWidget().FilePath; got != newPath {
+		t.Fatalf("diff viewer path: got %q, want %q", got, newPath)
+	}
+}
+
 func TestRenamePathSaveDoesNotRecreateOldFile(t *testing.T) {
 	tmp := t.TempDir()
 	old := filepath.Join(tmp, "old.txt")

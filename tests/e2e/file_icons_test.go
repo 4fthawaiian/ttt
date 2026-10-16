@@ -19,6 +19,12 @@ func TestFileIconsShowWhenEnabledInExplorerAndChanges(t *testing.T) {
 	h.exec("options.toggleFontIcons")
 
 	txt := fileicons.ForFile("alpha.txt").Glyph
+	h.app.EditorGroup.OpenFile(filepath.Join(h.dir, "alpha.txt"))
+	h.redraw()
+	tabRow := h.screenRow(2)
+	if !strings.Contains(tabRow, txt) || !strings.Contains(tabRow, "alpha.txt") {
+		t.Fatalf("editor tab does not show file icon:\n%s", tabRow)
+	}
 	h.exec("sidebar.explorer")
 	h.assertContains(txt + " alpha.txt")
 	h.assertContains("▶ subdir")
@@ -29,6 +35,37 @@ func TestFileIconsShowWhenEnabledInExplorerAndChanges(t *testing.T) {
 	h.app.Repository.RefreshNow(app.RepositoryWorktree)
 	h.exec("sidebar.changes")
 	h.assertContains("M " + txt + " alpha.txt")
+}
+
+func TestFileIconsToggleAcrossOpenInactiveDetails(t *testing.T) {
+	h := newTestHarness(t, 100, 30)
+	defer h.stop()
+
+	file := ui.CommitDetailFile{Status: "M", Path: "Dockerfile", ContentKind: ui.CommitDetailContentBinary}
+	commit := ui.NewCommitDetailWidget(h.dir, "commit", "abc1234", false)
+	commit.SetDetail("Commit", []ui.CommitDetailFile{file}, "")
+	current := ui.NewCurrentChangesWidget(h.dir, false)
+	current.SetCurrentChanges("Working tree", []ui.CommitDetailFile{file}, "")
+	h.app.EditorGroup.OpenPluginTab("commit-detail", "Commit details", commit)
+	h.app.EditorGroup.OpenPluginTab("current-changes", "Current Changes", current)
+
+	glyph := fileicons.ForFile("Dockerfile").Glyph
+	h.exec("options.toggleFontIcons")
+	h.assertContains(glyph)
+
+	if !h.app.EditorGroup.SwitchToTabByPath("commit-detail") {
+		t.Fatal("could not switch to inactive commit detail")
+	}
+	h.redraw()
+	h.assertContains(glyph)
+
+	h.exec("options.toggleFontIcons")
+	h.assertNotContains(glyph)
+	if !h.app.EditorGroup.SwitchToTabByPath("current-changes") {
+		t.Fatal("could not switch to inactive current changes")
+	}
+	h.redraw()
+	h.assertNotContains(glyph)
 }
 
 func TestSettingsFileIconsTurnOnAfterApply(t *testing.T) {

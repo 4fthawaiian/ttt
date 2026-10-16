@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eugenioenko/ttt/internal/config"
+	"github.com/eugenioenko/ttt/internal/fileicons"
 	"github.com/eugenioenko/ttt/internal/icons"
 )
 
@@ -38,7 +39,8 @@ func TestReadOnlyFileShowsIndicator(t *testing.T) {
 
 	applyIconMode(h, config.IconsNerdFont)
 	lock := icons.Get(config.IconsNerdFont, icons.Lock)
-	h.assertContains(lock + " locked.txt")
+	fileIcon := fileicons.ForFile("locked.txt").Glyph
+	h.assertContains(lock + " " + fileIcon + " locked.txt")
 	h.assertNotContains("(readonly)")
 
 	h.app.EditorGroup.OpenFile(filepath.Join(h.dir, "alpha.txt"))

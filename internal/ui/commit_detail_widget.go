@@ -138,6 +138,7 @@ type CommitDetailWidget struct {
 	Files    []CommitDetailFile
 
 	SyntaxHighlight  bool
+	Icons            string
 	TopLine          int
 	LeftCol          int
 	wrapMode         DiffWrapMode
@@ -267,6 +268,15 @@ func (d *CommitDetailWidget) SetDiffCollapsedEmphasis(enabled bool) {
 func (d *CommitDetailWidget) SetDiffSigns(enabled bool) {
 	d.signs = enabled
 	d.applyViewOptions()
+}
+
+func (d *CommitDetailWidget) SetFileIconMode(mode string) {
+	if d.Icons == mode {
+		return
+	}
+	d.Icons = mode
+	d.rebuildRows()
+	d.clampScroll()
 }
 
 func (d *CommitDetailWidget) SetChevrons(collapsed, expanded rune) {
@@ -725,6 +735,7 @@ func (d *CommitDetailWidget) buildRows() {
 		heading := commitDetailFileHeading(*file)
 		d.rows = append(d.rows, commitDetailRow{kind: commitDetailHeadingRow, text: heading, bold: true, fileIndex: fileIndex})
 		d.recordWidth(heading)
+		d.maxLineW = max(d.maxLineW, diffLineVisualWidth(heading)+fileIconPrefixWidth(d.Icons, file.Path))
 		if fileIndex < len(d.collapsedFiles) && d.collapsedFiles[fileIndex] {
 			continue
 		}
@@ -1011,7 +1022,7 @@ func (d *CommitDetailWidget) buildVisualRows(viewW int) []commitDetailVisualRow 
 			switch row.kind {
 			case commitDetailMessageHeaderRow, commitDetailHeaderDividerRow, commitDetailSpacerRow:
 			case commitDetailHeadingRow:
-				starts = diffWrapStarts(row.text, viewW-3)
+				starts = diffWrapStarts(row.text, viewW-3-fileIconPrefixWidth(d.Icons, d.Files[row.fileIndex].Path))
 			case commitDetailMetadataRow, commitDetailMessageRow:
 				starts = diffWrapStarts(row.text, viewW-2)
 			default:
@@ -1108,7 +1119,18 @@ func (d *CommitDetailWidget) renderHeading(surface Surface, rowIndex int, row co
 		rect:      Rect{X: r.X, Y: r.Y + y, W: viewW, H: 1},
 		fileIndex: row.fileIndex,
 	})
-	d.drawTextRow(surface, 3, y, viewW-3, row.text, headingStyle, term.StyleDefault, row.bold, visual.leftStart, rowIndex)
+	textX := 3
+	if row.fileIndex >= 0 && row.fileIndex < len(d.Files) {
+		path := d.Files[row.fileIndex].Path
+		if visual.continuation {
+			textX += fileIconPrefixWidth(d.Icons, path)
+		} else {
+			textX = drawFileIcon(surface, textX, y, viewW, fileIconRender{
+				mode: d.Icons, path: path, bgStyle: term.StyleDefault, bold: true,
+			})
+		}
+	}
+	d.drawTextRow(surface, textX, y, viewW-textX, row.text, headingStyle, term.StyleDefault, row.bold, visual.leftStart, rowIndex)
 }
 
 func (d *CommitDetailWidget) drawStaticText(surface Surface, x, y, width int, text string, style, bg term.Style, bold bool) {
@@ -1275,8 +1297,11 @@ func (d *CommitDetailWidget) renderStickyHeading(surface Surface, viewW int) {
 		headingStyle = StatusStyle(d.Files[row.fileIndex].Status)
 	}
 	surface.SetCell(1, 0, term.Cell{Ch: d.chevron(false), Style: headingStyle, Bold: true})
-	path := truncateCommitDetailPath(commitDetailFileHeading(d.Files[row.fileIndex]), viewW-3)
-	drawTextSegment(surface, 3, 0, viewW-3, path, 0, 0, term.Cell{Ch: ' '}, func(_ int, ch rune) term.Cell {
+	textX := drawFileIcon(surface, 3, 0, viewW, fileIconRender{
+		mode: d.Icons, path: d.Files[row.fileIndex].Path, bgStyle: term.StyleDefault, bold: true,
+	})
+	path := truncateCommitDetailPath(commitDetailFileHeading(d.Files[row.fileIndex]), viewW-textX)
+	drawTextSegment(surface, textX, 0, viewW-textX, path, 0, 0, term.Cell{Ch: ' '}, func(_ int, ch rune) term.Cell {
 		return term.Cell{Ch: ch, Style: headingStyle, Bold: true}
 	})
 	r := d.GetRect()

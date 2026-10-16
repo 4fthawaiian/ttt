@@ -33,18 +33,21 @@ type SearchMatch struct {
 
 type SearchFileGroup struct {
 	FilePath string
+	IconPath string
 	RelPath  string
 	Matches  []SearchMatch
 	Expanded bool
 }
 
 type DiffSearchSource struct {
-	TabName string
-	Lines   []string
+	TabName  string
+	IconPath string
+	Lines    []string
 }
 
 type SearchWidget struct {
 	BaseWidget
+	Icons        string
 	Input        *InputWidget
 	Include      *InputWidget
 	Exclude      *InputWidget
@@ -274,6 +277,7 @@ func (s *SearchWidget) streamSearch(ctx context.Context, gen uint64) {
 			if len(matches) > 0 {
 				g := SearchFileGroup{
 					FilePath: ds.TabName,
+					IconPath: ds.IconPath,
 					RelPath:  ds.TabName,
 					Expanded: true,
 				}
@@ -423,6 +427,7 @@ func (s *SearchWidget) streamFiles(ctx context.Context, gen uint64, groups *[]Se
 				groupMap[absPath] = idx
 				*groups = append(*groups, SearchFileGroup{
 					FilePath: absPath,
+					IconPath: absPath,
 					RelPath:  relPath,
 					Expanded: true,
 				})
@@ -668,16 +673,20 @@ func (s *SearchWidget) Render(surface Surface) {
 					chevron = '▶'
 				}
 			}
-			x := 0
-			surface.SetCell(x, y, term.Cell{Ch: chevron, Style: style})
-			x += 2
-
-			for _, ch := range g.RelPath {
-				if x >= w {
-					break
-				}
-				surface.SetCell(x, y, term.Cell{Ch: ch, Style: style})
-				x++
+			x := surface.DrawText(0, y, string(chevron), w, style) + 1
+			right := w - 1
+			if s.showReplace && s.ReplaceInput.Text != "" {
+				right = min(right, w-5)
+			}
+			iconPath := g.IconPath
+			if iconPath == "" {
+				iconPath = g.FilePath
+			}
+			x = drawFileIcon(surface, x, y, right, fileIconRender{
+				mode: s.Icons, path: iconPath, bgStyle: style, selected: idx == s.Selected,
+			})
+			if x < right {
+				x = surface.DrawText(x, y, g.RelPath, right, style)
 			}
 
 			countStr := fmt.Sprintf(" (%d)", len(g.Matches))
@@ -685,21 +694,17 @@ func (s *SearchWidget) Render(surface Surface) {
 			if idx == s.Selected {
 				mutedStyle = style
 			}
-			for _, ch := range countStr {
-				if x >= w {
-					break
-				}
-				surface.SetCell(x, y, term.Cell{Ch: ch, Style: mutedStyle})
-				x++
+			if x < right {
+				surface.DrawText(x, y, countStr, right, mutedStyle)
 			}
 
 			if s.showReplace && s.ReplaceInput.Text != "" {
 				bx := w - 2
-				if bx > x {
+				if bx >= 0 && bx < w-1 {
 					surface.SetCell(bx, y, term.Cell{Ch: '⟳', Style: mutedStyle})
 				}
 				px := w - 4
-				if px > x {
+				if px >= 0 && px < w-1 {
 					surface.SetCell(px, y, term.Cell{Ch: '⊙', Style: mutedStyle})
 				}
 			}

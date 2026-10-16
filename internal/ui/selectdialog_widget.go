@@ -71,6 +71,7 @@ type SelectDialogWidget struct {
 	OnDismiss         func()
 	OnSelectionChange func(id string)
 	Borders           *term.BorderSet
+	Icons             string
 
 	boxX         int
 	boxY         int
@@ -267,7 +268,13 @@ func (p *SelectDialogWidget) renderItemRow(surface Surface, y, contentRight int,
 		}
 	}
 
-	labelEnd := surface.DrawText(p.boxX+2, y, item.Label, contentRight-1, style)
+	labelX := p.boxX + 2
+	if p.mode == paletteFileMode {
+		labelX = drawFileIcon(surface, labelX, y, contentRight-1, fileIconRender{
+			mode: p.Icons, path: item.ID, bgStyle: style, selected: selected,
+		})
+	}
+	labelEnd := surface.DrawText(labelX, y, item.Label, contentRight-1, style)
 	if detail == "" {
 		return
 	}

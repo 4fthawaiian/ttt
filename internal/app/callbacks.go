@@ -144,7 +144,7 @@ func (a *App) DiffSearchSources() []ui.DiffSearchSource {
 			if seen[tabName] {
 				continue
 			}
-			sources = append(sources, ui.DiffSearchSource{TabName: tabName, Lines: ui.DiffCombinedLines(diff.Parse(diffText))})
+			sources = append(sources, ui.DiffSearchSource{TabName: tabName, IconPath: path, Lines: ui.DiffCombinedLines(diff.Parse(diffText))})
 		}
 	}
 	return sources

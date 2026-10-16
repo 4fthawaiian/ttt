@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugenioenko/ttt/internal/config"
+	"github.com/eugenioenko/ttt/internal/fileicons"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/eugenioenko/ttt/internal/widgets"
 	"github.com/gdamore/tcell/v3"
@@ -40,6 +42,54 @@ func TestTabBarRender(t *testing.T) {
 	// Row 2: baseline with gap
 	if grid[2][0].Ch != '┘' {
 		t.Fatalf("expected BottomRight at row 2 col 0, got '%c'", grid[2][0].Ch)
+	}
+}
+
+func TestTabBarShowsFileTypeIcon(t *testing.T) {
+	tb := NewTabBarWidget()
+	tb.Icons = config.IconsNerdFont
+	tb.SetTabs([]Tab{{Name: "custom title", FilePath: "/repo/Dockerfile", Active: true}})
+	tb.SetRect(Rect{W: 30, H: 3})
+
+	grid := makeGrid(30, 3)
+	tb.Render(NewRenderSurface(grid, Rect{W: 30, H: 3}))
+
+	glyph := []rune(fileicons.ForFile("Dockerfile").Glyph)[0]
+	if got := grid[1][2].Ch; got != glyph {
+		t.Fatalf("tab icon = %q, want %q", got, glyph)
+	}
+	if got := grid[1][2].Style; got != term.StyleFileIconBlue {
+		t.Fatalf("tab icon style = %v, want file-icon blue", got)
+	}
+	if got := grid[1][2].BgStyle; got != term.StyleActiveTab {
+		t.Fatalf("tab icon background = %v, want active-tab background", got)
+	}
+}
+
+func TestTabBarCloseHitIncludesFileIconWidth(t *testing.T) {
+	tb := NewTabBarWidget()
+	tb.Icons = config.IconsNerdFont
+	closed := false
+	tb.OnTabClose = func(index int) { closed = index == 0 }
+	tb.SetTabs([]Tab{{Name: "Dockerfile", FilePath: "/repo/Dockerfile", Active: true, Closable: true}})
+	tb.SetRect(Rect{W: 40, H: 3})
+
+	grid := makeGrid(40, 3)
+	tb.Render(NewRenderSurface(grid, Rect{W: 40, H: 3}))
+	closeX := -1
+	for x, cell := range grid[1] {
+		if cell.Ch == '✕' {
+			closeX = x
+			break
+		}
+	}
+	if closeX < 0 {
+		t.Fatal("close button not rendered")
+	}
+	tb.HandleEvent(tcell.NewEventMouse(closeX, 1, tcell.Button1, tcell.ModNone))
+	tb.HandleEvent(tcell.NewEventMouse(closeX, 1, tcell.ButtonNone, tcell.ModNone))
+	if !closed {
+		t.Fatal("clicking the rendered close button did not close the tab")
 	}
 }
 

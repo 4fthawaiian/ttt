@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eugenioenko/ttt/internal/config"
 	"github.com/eugenioenko/ttt/internal/core/diff"
+	"github.com/eugenioenko/ttt/internal/fileicons"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/gdamore/tcell/v3"
 )
@@ -33,6 +35,88 @@ func twoHunkDetail() *CommitDetailWidget {
 		Diff: diff.Parse("--- a/test.go\n+++ b/test.go\n@@ -1,1 +1,1 @@\n-old one\n+new one\n@@ -10,1 +10,1 @@\n-old ten\n+new ten\n"),
 	}}, "")
 	return detail
+}
+
+func TestCommitDetailHeadingIconUsesRenamedDestinationAndTogglesSpacing(t *testing.T) {
+	detail := NewCommitDetailWidget("/repo", "full", "abc1234", false)
+	detail.SetDetail("Subject", []CommitDetailFile{{
+		Status: "R", Path: "Dockerfile", OldPath: "old.txt", ContentKind: CommitDetailContentBinary,
+	}}, "")
+	detail.SetFileIconMode(config.IconsNerdFont)
+
+	grid := renderDetail(detail, 60, 8)
+	_, headingY, ok := detailFind(grid, "old.txt")
+	if !ok {
+		t.Fatalf("rename heading not rendered:\n%s", detailTestText(grid))
+	}
+	icon := []rune(fileicons.ForFile("Dockerfile").Glyph)[0]
+	if grid[headingY][3].Ch != icon || grid[headingY][3].Style != term.StyleFileIconBlue {
+		t.Fatalf("renamed file icon = %+v, want Dockerfile icon", grid[headingY][3])
+	}
+	if !strings.Contains(detailTestText(grid), "old.txt → Dockerfile") {
+		t.Fatalf("rename heading changed:\n%s", detailTestText(grid))
+	}
+
+	detail.SetFileIconMode(config.IconsNone)
+	grid = renderDetail(detail, 60, 8)
+	_, headingY, _ = detailFind(grid, "old.txt")
+	if got := grid[headingY][3].Ch; got != 'o' {
+		t.Fatalf("heading starts at %q without icon, want destination text at column 3", got)
+	}
+}
+
+func TestCommitDetailHeadingWrappingIncludesFileIconWidth(t *testing.T) {
+	detail := NewCommitDetailWidget("/repo", "full", "abc1234", false)
+	detail.SetDetail("Subject", []CommitDetailFile{{
+		Path: strings.Repeat("界", 10), ContentKind: CommitDetailContentBinary,
+	}}, "")
+	detail.SetWrapMode(DiffWrapOn)
+	detail.SetFileIconMode(config.IconsNerdFont)
+	grid := renderDetail(detail, 14, 20)
+	withIcon := countCommitHeadingRows(detail)
+	icon := []rune(fileicons.ForFile(strings.Repeat("界", 10)).Glyph)[0]
+	iconCount := 0
+	for _, row := range grid {
+		for _, cell := range row {
+			if cell.Ch == icon {
+				iconCount++
+			}
+		}
+	}
+	if iconCount != 1 {
+		t.Fatalf("wrapped heading rendered %d icons, want 1:\n%s", iconCount, detailTestText(grid))
+	}
+	detail.SetFileIconMode(config.IconsNone)
+	renderDetail(detail, 14, 20)
+	withoutIcon := countCommitHeadingRows(detail)
+	if withIcon <= withoutIcon {
+		t.Fatalf("heading rows with icon = %d, without = %d; icon width not reserved", withIcon, withoutIcon)
+	}
+}
+
+func countCommitHeadingRows(detail *CommitDetailWidget) int {
+	count := 0
+	for _, visual := range detail.visualRows {
+		if detail.rows[visual.row].kind == commitDetailHeadingRow {
+			count++
+		}
+	}
+	return count
+}
+
+func TestCommitDetailStickyHeadingReservesFileIconWidth(t *testing.T) {
+	detail := twoHunkDetail()
+	detail.SetFileIconMode(config.IconsNerdFont)
+	renderDetail(detail, 60, 4)
+	detail.HandleEvent(tcell.NewEventKey(tcell.KeyEnd, "", tcell.ModNone))
+	grid := renderDetail(detail, 60, 4)
+	icon := []rune(fileicons.ForFile("test.go").Glyph)[0]
+	if grid[0][3].Ch != icon || grid[0][3].Style != term.StyleFileIconCyan {
+		t.Fatalf("sticky icon cell = %+v, want test.go icon", grid[0][3])
+	}
+	if got := grid[0][5].Ch; got != 't' {
+		t.Fatalf("sticky path starts at %q, want column 5 after icon", got)
+	}
 }
 
 func TestCommitDetailSplitShowsSidesOnOneRow(t *testing.T) {
@@ -77,6 +161,23 @@ func TestCommitDetailStickyHeadingWhileScrolledIntoFile(t *testing.T) {
 	grid := renderDetail(detail, 60, 4)
 	if first := strings.Split(detailTestText(grid), "\n")[0]; !strings.Contains(first, "▼ test.go") {
 		t.Fatalf("top row = %q, want the sticky file heading", first)
+	}
+}
+
+func TestCommitDetailStickyHeadingTruncatesAfterIconForWidePath(t *testing.T) {
+	detail := twoHunkDetail()
+	detail.Files[0].Path = strings.Repeat("界", 10)
+	detail.rebuildRows()
+	detail.SetFileIconMode(config.IconsNerdFont)
+	renderDetail(detail, 14, 4)
+	detail.HandleEvent(tcell.NewEventKey(tcell.KeyEnd, "", tcell.ModNone))
+	grid := renderDetail(detail, 14, 4)
+	icon := []rune(fileicons.ForFile(strings.Repeat("界", 10)).Glyph)[0]
+	if grid[0][3].Ch != icon {
+		t.Fatalf("sticky icon = %q, want %q", grid[0][3].Ch, icon)
+	}
+	if grid[0][5].Ch != '…' {
+		t.Fatalf("sticky path starts at %q after icon, want truncation marker", grid[0][5].Ch)
 	}
 }
 

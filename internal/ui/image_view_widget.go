@@ -49,6 +49,11 @@ func NewImageViewWidget(path string) *ImageViewWidget {
 	return w
 }
 
+func (w *ImageViewWidget) SetFilePath(path string) {
+	w.FilePath = path
+	w.Refresh()
+}
+
 // A changed file on disk drops the cached bytes, which releases the old image in the terminal.
 func (w *ImageViewWidget) Refresh() {
 	w.Format = ""

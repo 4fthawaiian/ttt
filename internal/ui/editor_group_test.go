@@ -5,8 +5,44 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/eugenioenko/ttt/internal/config"
+	"github.com/eugenioenko/ttt/internal/core/diff"
+	"github.com/eugenioenko/ttt/internal/fileicons"
 	"github.com/eugenioenko/ttt/internal/term"
 )
+
+func TestEditorGroupTabIconUsesFilePathInsteadOfCustomTitle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Dockerfile")
+	group := NewEditorGroupWidget(nil, 4, false, "extended")
+	group.TabBar.Icons = config.IconsNerdFont
+	group.OpenDiffTab(path+" (diff)", "custom tab title", path, diff.FileDiff{}, nil, nil, false)
+	group.syncTabs()
+
+	group.TabBar.SetRect(Rect{W: 80, H: 3})
+	grid := makeGrid(80, 3)
+	group.TabBar.Render(NewRenderSurface(grid, Rect{W: 80, H: 3}))
+	want := []rune(fileicons.ForFile("Dockerfile").Glyph)[0]
+	for _, cell := range grid[1] {
+		if cell.Ch == want && cell.Style == term.StyleFileIconBlue {
+			return
+		}
+	}
+	t.Fatalf("diff-tab icon for underlying path %q missing:\n%+v", path, group.TabBar.Tabs)
+}
+
+func TestEditorGroupDiffSearchSourceKeepsFileIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Dockerfile")
+	group := NewEditorGroupWidget(nil, 4, false, "extended")
+	group.OpenDiffTab(path+" (diff)", "custom title", path, diff.FileDiff{}, nil, nil, false)
+
+	sources := group.DiffTabSources()
+	if len(sources) != 1 {
+		t.Fatalf("diff sources = %d, want 1", len(sources))
+	}
+	if sources[0].TabName != path+" (diff)" || sources[0].IconPath != path {
+		t.Fatalf("diff source = %+v, want display ID and underlying file path", sources[0])
+	}
+}
 
 func TestEditorGroupShebangHighlighting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deploy")

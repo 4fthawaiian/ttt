@@ -22,6 +22,11 @@ func NewBinaryFileWidget(path string) *BinaryFileWidget {
 	return w
 }
 
+func (w *BinaryFileWidget) SetFilePath(path string) {
+	w.FilePath = path
+	w.Refresh()
+}
+
 func (w *BinaryFileWidget) Refresh() {
 	w.Size = 0
 	w.Err = ""

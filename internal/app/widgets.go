@@ -218,7 +218,7 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 
 	highlight.SetTimeLimit(time.Duration(cfg.Settings.Editor.HighlightTimeLimit) * time.Millisecond)
 	editorGroup := ui.NewEditorGroupWidget(borders, cfg.Settings.Editor.TabSize, cfg.Settings.Editor.LineNumbers, cfg.Settings.Editor.GutterStyle)
-	editorGroup.TabBar.Icons = cfg.Settings.Appearance.Icons
+	editorGroup.SetFileIconMode(cfg.Settings.Appearance.Icons)
 	editorGroup.InsertSpaces = cfg.Settings.Editor.InsertSpaces
 	editorGroup.InsertFinalNewline = cfg.Settings.Editor.InsertFinalNewline
 	editorGroup.ShowTrailingNewline = cfg.Settings.Editor.IsShowTrailingNewlineEnabled()
@@ -290,6 +290,7 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 	})
 
 	search := ui.NewSearchWidget()
+	search.Icons = cfg.Settings.Appearance.Icons
 	search.SetWorkDirs(ws.Paths())
 	search.Debounce.DelayMs = cfg.Settings.Search.Debounce
 	changes := NewChangesPanel(ws.Paths()...)

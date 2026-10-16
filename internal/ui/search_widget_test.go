@@ -4,7 +4,105 @@ import (
 	"errors"
 	"os/exec"
 	"testing"
+
+	"github.com/eugenioenko/ttt/internal/config"
+	"github.com/eugenioenko/ttt/internal/fileicons"
+	"github.com/eugenioenko/ttt/internal/term"
 )
+
+func TestSearchFileRowsShowIconsAndOmitIconSpacingWhenDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		iconX    rune
+		fileName rune
+	}{
+		{mode: config.IconsNerdFont, iconX: []rune(fileicons.ForFile("Dockerfile").Glyph)[0], fileName: 'D'},
+		{mode: config.IconsNone, fileName: 'D'},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			s := NewSearchWidget()
+			s.Icons = tc.mode
+			s.Selected = -1
+			s.lastSelected = -1
+			s.Groups = []SearchFileGroup{{
+				FilePath: "/repo/Dockerfile",
+				RelPath:  "Dockerfile",
+				Expanded: true,
+				Matches:  []SearchMatch{{LineNum: 1}},
+			}}
+			s.flatten()
+			grid := makeGrid(40, 8)
+			s.Render(NewRenderSurface(grid, Rect{W: 40, H: 8}))
+
+			row := grid[4]
+			if tc.mode == config.IconsNerdFont {
+				if row[2].Ch != tc.iconX || row[2].Style != term.StyleFileIconBlue {
+					t.Fatalf("file icon cell = %+v, want Dockerfile blue icon", row[2])
+				}
+				if row[4].Ch != tc.fileName {
+					t.Fatalf("filename starts at column 4, got %q", row[4].Ch)
+				}
+			} else if row[2].Ch != tc.fileName {
+				t.Fatalf("filename should start at column 2 with icons disabled, got %q", row[2].Ch)
+			}
+		})
+	}
+}
+
+func TestSearchDiffRowsUseUnderlyingFileIconPath(t *testing.T) {
+	s := NewSearchWidget()
+	s.Icons = config.IconsNerdFont
+	s.Selected = -1
+	s.lastSelected = -1
+	s.Groups = []SearchFileGroup{{
+		FilePath: "diff-tab-id",
+		IconPath: "/repo/Dockerfile",
+		RelPath:  "diff-tab-id",
+		Expanded: true,
+		Matches:  []SearchMatch{{LineNum: 1, LineText: "Dockerfile"}},
+	}}
+	s.flatten()
+
+	if got := s.Groups[0].FilePath; got != "diff-tab-id" {
+		t.Fatalf("search file identity = %q, want diff tab identity", got)
+	}
+	grid := makeGrid(40, 8)
+	s.Render(NewRenderSurface(grid, Rect{W: 40, H: 8}))
+	row := grid[s.resultStartY]
+	icon := []rune(fileicons.ForFile("Dockerfile").Glyph)[0]
+	if row[2].Ch != icon || row[2].Style != term.StyleFileIconBlue {
+		t.Fatalf("diff search icon = %+v, want Dockerfile icon", row[2])
+	}
+}
+
+func TestSearchFileRowsReserveReplaceActionsAndScrollbarForWidePaths(t *testing.T) {
+	s := NewSearchWidget()
+	s.Icons = config.IconsNerdFont
+	s.showReplace = true
+	s.ReplaceInput.Text = "replacement"
+	s.Selected = -1
+	s.lastSelected = -1
+	s.Groups = []SearchFileGroup{{
+		FilePath: "/repo/界界界界界界",
+		RelPath:  "界界界界界界",
+		Expanded: true,
+		Matches:  []SearchMatch{{LineNum: 1}},
+	}}
+	s.flatten()
+	grid := makeGrid(14, 8)
+	s.Render(NewRenderSurface(grid, Rect{W: 14, H: 8}))
+
+	row := grid[s.resultStartY]
+	if row[8].Ch != ' ' {
+		t.Fatalf("wide path glyph crossed into preview hitbox at column 9: %q", row[8].Ch)
+	}
+	if row[10].Ch != '⊙' || row[12].Ch != '⟳' {
+		t.Fatalf("replace actions overwritten by path: %q %q\n%s", row[10].Ch, row[12].Ch, detailTestText(grid))
+	}
+	if row[13].Ch != ' ' {
+		t.Fatalf("path crossed into scrollbar column: %q", row[13].Ch)
+	}
+}
 
 func TestRgFailureIgnoresNoMatches(t *testing.T) {
 	// rg exits 1 when it finds nothing, which is an empty result, not a failure.

@@ -12,15 +12,25 @@ import (
 	"github.com/gdamore/tcell/v3"
 )
 
+type tabLabelLayout struct {
+	text      string
+	dirty     bool
+	pinned    bool
+	iconStart int
+	iconWidth int
+	iconStyle term.Style
+}
+
 type tabSpan struct {
 	start, end int
-	label      string
+	label      tabLabelLayout
 	active     bool
 }
 
 type Tab struct {
 	ID       string
 	Name     string
+	FilePath string
 	Dirty    bool
 	Active   bool
 	Closable bool
@@ -80,6 +90,10 @@ func (t *TabBarWidget) SetTabs(tabs []Tab) {
 }
 
 func (t *TabBarWidget) tabLabel(tab Tab) string {
+	return t.tabLabelParts(tab).text
+}
+
+func (t *TabBarWidget) tabLabelParts(tab Tab) tabLabelLayout {
 	name := filepath.Base(tab.Name)
 	prefix := " "
 	suffix := ""
@@ -93,36 +107,55 @@ func (t *TabBarWidget) tabLabel(tab Tab) string {
 			suffix = " (readonly)"
 		}
 	}
-	label := prefix + name + suffix
+	label := tabLabelLayout{
+		text:   prefix,
+		dirty:  tab.Dirty,
+		pinned: tab.Pinned,
+	}
+	glyph, iconStyle := FileIconForPath(t.Icons, tab.FilePath)
+	label.iconStart = textwidth.String(label.text)
+	label.iconWidth = textwidth.String(glyph)
+	label.iconStyle = iconStyle
+	if glyph != "" {
+		label.text += glyph + " "
+	}
+	label.text += name + suffix
 	if tab.Active && tab.Closable {
 		if tab.Pinned {
-			label += " " + icons.Get(t.Icons, icons.Pinned)
+			label.text += " " + icons.Get(t.Icons, icons.Pinned)
 		} else {
-			label += " ✕"
+			label.text += " ✕"
 		}
 	}
-	label += " "
+	label.text += " "
 	return label
 }
 
 // drawTabLabel draws a tab label from x, advancing by each rune's display width
 // and clipping to the scrollable inner zone. The dirty and pinned markers keep
 // their own styles so they stay visible against the tab background.
-func drawTabLabel(surface Surface, x, innerLeft, innerRight int, label string, dirty bool, pinned bool, mode string, style term.Style) {
+func drawTabLabel(surface Surface, x, innerLeft, innerRight int, label tabLabelLayout, mode string, style term.Style) {
 	pinnedGlyph := icons.Get(mode, icons.Pinned)
-	for _, ch := range label {
+	labelX := 0
+	for _, ch := range label.text {
 		chStyle := style
-		if dirty && ch == '●' {
+		bgStyle := term.StyleDefault
+		if label.dirty && ch == '●' {
 			chStyle = term.StyleWarning
 		}
-		if pinned && string(ch) == pinnedGlyph {
+		if label.pinned && string(ch) == pinnedGlyph {
 			chStyle = term.StyleMuted
 		}
 		w := textwidth.Rune(ch)
+		if label.iconWidth > 0 && labelX >= label.iconStart && labelX < label.iconStart+label.iconWidth {
+			chStyle = label.iconStyle
+			bgStyle = style
+		}
 		if x >= innerLeft && x+w <= innerRight {
-			surface.SetCell(x, 1, term.Cell{Ch: ch, Style: chStyle})
+			surface.SetCell(x, 1, term.Cell{Ch: ch, Style: chStyle, BgStyle: bgStyle})
 		}
 		x += w
+		labelX += w
 	}
 }
 
@@ -145,8 +178,8 @@ func (t *TabBarWidget) Render(surface Surface) {
 	pos := 0
 	activeIdx := -1
 	for i, tab := range t.Tabs {
-		label := t.tabLabel(tab)
-		labelW := textwidth.String(label)
+		label := t.tabLabelParts(tab)
+		labelW := textwidth.String(label.text)
 		spanW := labelW
 		if tab.Active {
 			spanW += 2
@@ -229,21 +262,19 @@ func (t *TabBarWidget) Render(surface Surface) {
 	for x := 0; x < w; x++ {
 		surface.SetCell(x, 1, term.Cell{Ch: ' '})
 	}
-	for i, s := range spans {
+	for _, s := range spans {
 		sx := s.start - t.ScrollOffset + innerLeft
 		ex := s.end - t.ScrollOffset + innerLeft
-		dirty := t.Tabs[i].Dirty
-		pinned := t.Tabs[i].Pinned
 		if s.active {
 			if sx >= innerLeft && sx < innerRight {
 				surface.SetCell(sx, 1, term.Cell{Ch: b.Vertical, Style: bs})
 			}
-			drawTabLabel(surface, sx+1, innerLeft, innerRight, s.label, dirty, pinned, t.Icons, term.StyleActiveTab)
+			drawTabLabel(surface, sx+1, innerLeft, innerRight, s.label, t.Icons, term.StyleActiveTab)
 			if ex-1 >= innerLeft && ex-1 < innerRight {
 				surface.SetCell(ex-1, 1, term.Cell{Ch: b.Vertical, Style: bs})
 			}
 		} else {
-			drawTabLabel(surface, sx, innerLeft, innerRight, s.label, dirty, pinned, t.Icons, term.StyleInactiveTab)
+			drawTabLabel(surface, sx, innerLeft, innerRight, s.label, t.Icons, term.StyleInactiveTab)
 		}
 	}
 
