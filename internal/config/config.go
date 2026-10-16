@@ -57,6 +57,17 @@ func Load(settingsFile string) AppConfig {
 
 var OverrideConfigDir string
 
+// UserConfigDir is the writable config directory: the override, or ~/.config/ttt.
+func UserConfigDir() string {
+	if OverrideConfigDir != "" {
+		return OverrideConfigDir
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "ttt")
+	}
+	return ""
+}
+
 func configPaths() []string {
 	if OverrideConfigDir != "" {
 		return []string{OverrideConfigDir}

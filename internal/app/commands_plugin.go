@@ -528,16 +528,11 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 		return lines
 	}
 	p.Editor = NewPluginEditorAPI(a)
-	fsRoots := a.Workspace.Paths()
-	if p.Dir != "" {
-		fsRoots = append(fsRoots, p.Dir)
+	fs := NewPluginFilesystemAPIFor(p, a.Workspace.Paths())
+	fs.onWrite = func(path string) {
+		a.postRepositoryInvalidation(path, RepositoryWorktree)
 	}
-	p.Filesystem = NewPluginFilesystemAPI(fsRoots...)
-	if fs, ok := p.Filesystem.(*PluginFilesystemAPI); ok {
-		fs.onWrite = func(path string) {
-			a.postRepositoryInvalidation(path, RepositoryWorktree)
-		}
-	}
+	p.Filesystem = fs
 	p.System = NewPluginSystemAPI()
 	if system, ok := p.System.(*PluginSystemAPI); ok {
 		system.onExec = func() {

@@ -317,40 +317,75 @@ func (e *PluginEditorAPI) ClearSearch() {
 
 // PluginFilesystemAPI implements plugin.FilesystemAPI with path restrictions.
 type PluginFilesystemAPI struct {
-	allowedRoots []string
-	onWrite      func(path string)
+	read    fsRoots
+	write   fsRoots
+	vars    plugin.FsVars
+	onWrite func(path string)
+}
+
+type fsRoots struct {
+	dirs []string
+	all  bool
 }
 
 func NewPluginFilesystemAPI(allowedRoots ...string) *PluginFilesystemAPI {
-	resolved := make([]string, 0, len(allowedRoots))
-	for _, root := range allowedRoots {
+	roots := newFsRoots(allowedRoots, false)
+	return &PluginFilesystemAPI{read: roots, write: roots}
+}
+
+func NewPluginFilesystemAPIFor(p *plugin.Plugin, workspace []string) *PluginFilesystemAPI {
+	vars := plugin.FsVars{Workspace: workspace, Config: config.UserConfigDir()}
+	if home, err := os.UserHomeDir(); err == nil {
+		vars.Home = home
+	}
+	roots := func(access plugin.FsAccess) fsRoots {
+		dirs, all := access.Resolve(vars)
+		if p.Dir != "" {
+			dirs = append(dirs, p.Dir)
+		}
+		return newFsRoots(dirs, all)
+	}
+	return &PluginFilesystemAPI{read: roots(p.Granted.FsRead), write: roots(p.Granted.FsWrite), vars: vars}
+}
+
+func newFsRoots(dirs []string, all bool) fsRoots {
+	resolved := make([]string, 0, len(dirs))
+	for _, root := range dirs {
 		abs, err := filepath.Abs(root)
 		if err != nil {
 			continue
 		}
 		abs = filepath.Clean(abs)
 		resolved = append(resolved, abs)
-		// validatePath resolves symlinks in the requested path, so a root under a symlink (macOS /tmp and
+		// check resolves symlinks in the requested path, so a root under a symlink (macOS /tmp and
 		// /var) must also be allowed in resolved form, or the workspace denies its own files.
 		if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
 			resolved = append(resolved, real)
 		}
 	}
-	return &PluginFilesystemAPI{allowedRoots: resolved}
+	return fsRoots{dirs: resolved, all: all}
 }
 
-func (f *PluginFilesystemAPI) validatePath(path string) error {
+func (r fsRoots) check(path string) error {
+	if r.all {
+		return nil
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
 	}
 	clean := filepath.Clean(abs)
 
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(clean)); err == nil {
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		clean = resolved
+	} else if info, err := os.Lstat(clean); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		// A dangling symlink: writing through it would create its target, wherever that is.
+		return fmt.Errorf("access denied: path %q is a dangling symlink", path)
+	} else if resolved, err := filepath.EvalSymlinks(filepath.Dir(clean)); err == nil {
 		clean = filepath.Join(resolved, filepath.Base(clean))
 	}
 
-	for _, root := range f.allowedRoots {
+	for _, root := range r.dirs {
 		if clean == root || strings.HasPrefix(clean, root+string(filepath.Separator)) {
 			return nil
 		}
@@ -359,7 +394,8 @@ func (f *PluginFilesystemAPI) validatePath(path string) error {
 }
 
 func (f *PluginFilesystemAPI) ReadFile(path string) (string, error) {
-	if err := f.validatePath(path); err != nil {
+	path = f.vars.Expand(path)
+	if err := f.read.check(path); err != nil {
 		return "", err
 	}
 	data, err := os.ReadFile(path)
@@ -370,7 +406,8 @@ func (f *PluginFilesystemAPI) ReadFile(path string) (string, error) {
 }
 
 func (f *PluginFilesystemAPI) WriteFile(path, content string) error {
-	if err := f.validatePath(path); err != nil {
+	path = f.vars.Expand(path)
+	if err := f.write.check(path); err != nil {
 		return err
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -383,7 +420,8 @@ func (f *PluginFilesystemAPI) WriteFile(path, content string) error {
 }
 
 func (f *PluginFilesystemAPI) FileExists(path string) bool {
-	if err := f.validatePath(path); err != nil {
+	path = f.vars.Expand(path)
+	if err := f.read.check(path); err != nil {
 		return false
 	}
 	_, err := os.Stat(path)
@@ -391,7 +429,8 @@ func (f *PluginFilesystemAPI) FileExists(path string) bool {
 }
 
 func (f *PluginFilesystemAPI) ListDir(path string) ([]plugin.FileEntry, error) {
-	if err := f.validatePath(path); err != nil {
+	path = f.vars.Expand(path)
+	if err := f.read.check(path); err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(path)

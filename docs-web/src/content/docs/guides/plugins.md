@@ -94,8 +94,8 @@ Available permissions include:
 | `keybindings` | Bind keyboard shortcuts |
 | `editor.read` | Read editor buffer contents |
 | `editor.write` | Modify editor buffers |
-| `fs.read` | Read files and directories |
-| `fs.write` | Write files |
+| `fs.read` | Read files and directories (`true` for the workspace, or a list of allowed paths) |
+| `fs.write` | Write files (`true` for the workspace, or a list of allowed paths) |
 | `system.exec` | Execute specific system commands |
 | `system.env` | Read environment variables |
 | `network.http` | Make HTTP requests (`true` for any host, or a list of allowed hostnames) |

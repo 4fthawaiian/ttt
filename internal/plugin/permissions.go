@@ -3,9 +3,111 @@ package plugin
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 )
+
+const (
+	FsWorkspace = "{workspace}"
+	FsConfig    = "{config}"
+	FsAnyPath   = "*"
+)
+
+// FsAccess is the fs.read or fs.write permission: `true` (the workspace) or an
+// array of paths. An array grants only what it lists, so the workspace is
+// excluded unless `{workspace}` is listed.
+type FsAccess struct {
+	Paths []string
+}
+
+func (f FsAccess) Enabled() bool { return len(f.Paths) > 0 }
+
+func (f FsAccess) Covers(path string) bool {
+	return slices.Contains(f.Paths, FsAnyPath) || slices.Contains(f.Paths, path)
+}
+
+func (f FsAccess) MarshalJSON() ([]byte, error) {
+	if len(f.Paths) == 1 && f.Paths[0] == FsWorkspace {
+		return json.Marshal(true)
+	}
+	if len(f.Paths) > 0 {
+		return json.Marshal(f.Paths)
+	}
+	return json.Marshal(false)
+}
+
+func (f *FsAccess) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		f.Paths = nil
+		if b {
+			f.Paths = []string{FsWorkspace}
+		}
+		return nil
+	}
+	var paths []string
+	if err := json.Unmarshal(data, &paths); err != nil {
+		return fmt.Errorf("fs permissions must be a boolean or an array of paths: %w", err)
+	}
+	for _, p := range paths {
+		if !validFsPath(p) {
+			return fmt.Errorf("fs permission path %q must be %s, %s, an absolute path, or start with ~ or %s", p, FsAnyPath, FsWorkspace, FsConfig)
+		}
+	}
+	f.Paths = paths
+	return nil
+}
+
+func validFsPath(p string) bool {
+	return p == FsAnyPath || p == FsWorkspace || hasPathPrefix(p, "~") || hasPathPrefix(p, FsConfig) || filepath.IsAbs(p)
+}
+
+func hasPathPrefix(p, prefix string) bool {
+	return p == prefix || strings.HasPrefix(p, prefix+"/") || strings.HasPrefix(p, prefix+string(filepath.Separator))
+}
+
+type FsVars struct {
+	Workspace []string
+	Config    string
+	Home      string
+}
+
+func (v FsVars) Expand(path string) string {
+	if v.Home != "" && hasPathPrefix(path, "~") {
+		return filepath.Join(v.Home, path[1:])
+	}
+	if v.Config != "" && hasPathPrefix(path, FsConfig) {
+		return filepath.Join(v.Config, path[len(FsConfig):])
+	}
+	return path
+}
+
+func (f FsAccess) Resolve(v FsVars) (dirs []string, all bool) {
+	for _, p := range f.Paths {
+		switch p {
+		case FsAnyPath:
+			all = true
+		case FsWorkspace:
+			dirs = append(dirs, v.Workspace...)
+		default:
+			if e := v.Expand(p); filepath.IsAbs(e) {
+				dirs = append(dirs, e)
+			}
+		}
+	}
+	return dirs, all
+}
+
+func fsPathLabel(p string) string {
+	switch p {
+	case FsWorkspace:
+		return "workspace"
+	case FsAnyPath:
+		return "any path"
+	}
+	return p
+}
 
 // NetworkHTTP is the network.http permission. In a manifest it is either a
 // boolean (`true` = any host) or an array of allowed hostnames
@@ -71,8 +173,8 @@ type PermissionSet struct {
 	EditorDiagnostics bool        `json:"editor.diagnostics,omitempty"`
 	EditorBookmarks   bool        `json:"editor.bookmarks,omitempty"`
 	FileHandlers      bool        `json:"editor.file_handlers,omitempty"`
-	FsRead            bool        `json:"fs.read,omitempty"`
-	FsWrite           bool        `json:"fs.write,omitempty"`
+	FsRead            FsAccess    `json:"fs.read,omitzero"`
+	FsWrite           FsAccess    `json:"fs.write,omitzero"`
 	SystemExec        []string    `json:"system.exec,omitempty"`
 	SystemEnv         bool        `json:"system.env,omitempty"`
 	NetworkHTTP       NetworkHTTP `json:"network.http,omitempty"`
@@ -113,8 +215,15 @@ func DiffPermissions(granted, requested PermissionSet) PermissionDiff {
 	check("editor.diagnostics", granted.EditorDiagnostics, requested.EditorDiagnostics)
 	check("editor.bookmarks", granted.EditorBookmarks, requested.EditorBookmarks)
 	check("editor.file_handlers", granted.FileHandlers, requested.FileHandlers)
-	check("fs.read", granted.FsRead, requested.FsRead)
-	check("fs.write", granted.FsWrite, requested.FsWrite)
+	checkFs := func(name string, g, r FsAccess) {
+		for _, p := range r.Paths {
+			if !g.Covers(p) {
+				entries = append(entries, PermissionDiffEntry{Name: name, Value: p})
+			}
+		}
+	}
+	checkFs("fs.read", granted.FsRead, requested.FsRead)
+	checkFs("fs.write", granted.FsWrite, requested.FsWrite)
 	check("system.env", granted.SystemEnv, requested.SystemEnv)
 	check("events.file", granted.EventsFile, requested.EventsFile)
 	check("events.editor", granted.EventsEditor, requested.EventsEditor)
@@ -185,9 +294,9 @@ func (ps PermissionSet) Check(perm string) error {
 	case "editor.file_handlers":
 		allowed = ps.FileHandlers
 	case "fs.read":
-		allowed = ps.FsRead
+		allowed = ps.FsRead.Enabled()
 	case "fs.write":
-		allowed = ps.FsWrite
+		allowed = ps.FsWrite.Enabled()
 	case "system.env":
 		allowed = ps.SystemEnv
 	case "network.http":
@@ -264,8 +373,12 @@ func (ps PermissionSet) DisplayEntries() []PermissionDiffEntry {
 	add("Editor diagnostics", ps.EditorDiagnostics)
 	add("Editor bookmarks", ps.EditorBookmarks)
 	add("Handle file types", ps.FileHandlers)
-	add("Read files", ps.FsRead)
-	add("Write files", ps.FsWrite)
+	for _, p := range ps.FsRead.Paths {
+		entries = append(entries, PermissionDiffEntry{Name: "Read files", Value: fsPathLabel(p)})
+	}
+	for _, p := range ps.FsWrite.Paths {
+		entries = append(entries, PermissionDiffEntry{Name: "Write files", Value: fsPathLabel(p)})
+	}
 	add("Environment", ps.SystemEnv)
 	add("File events", ps.EventsFile)
 	add("Editor events", ps.EventsEditor)

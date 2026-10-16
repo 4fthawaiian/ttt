@@ -40,7 +40,7 @@ type Manager struct {
 	settingsAPI SettingsAPI
 	networkAPI  NetworkAPI
 	systemAPI   SystemAPI
-	fsFactory   func(pluginDir string) FilesystemAPI
+	fsFactory   func(p *Plugin) FilesystemAPI
 	logFactory  func(pluginName string) func(level, message string)
 	appVersion  string
 }
@@ -209,10 +209,10 @@ func (m *Manager) SetEditorAPI(api EditorAPI) {
 	}
 }
 
-func (m *Manager) SetFilesystemAPI(factory func(pluginDir string) FilesystemAPI) {
+func (m *Manager) SetFilesystemAPI(factory func(p *Plugin) FilesystemAPI) {
 	m.fsFactory = factory
 	for _, p := range m.plugins {
-		p.Filesystem = factory(p.Dir)
+		p.Filesystem = factory(p)
 	}
 }
 
@@ -272,7 +272,7 @@ func (m *Manager) wireAPIs(p *Plugin) {
 		p.System = m.systemAPI
 	}
 	if m.fsFactory != nil {
-		p.Filesystem = m.fsFactory(p.Dir)
+		p.Filesystem = m.fsFactory(p)
 	}
 	if m.logFactory != nil {
 		p.Log = m.logFactory(p.Name)

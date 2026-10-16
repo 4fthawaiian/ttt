@@ -1934,10 +1934,30 @@ contribute nothing for that click.
 
 ## Filesystem API
 
-The `ttt.fs` module provides file system access. Access is restricted to the workspace folders and the plugin's own directory — paths outside these roots (including via symlinks) return an "access denied" error.
+The `ttt.fs` module provides file system access. Access is restricted to the paths the `fs.read` and `fs.write` permissions grant, plus the plugin's own directory. Paths outside them (including via symlinks) return an "access denied" error.
 
 ```lua
 local fs = require("ttt.fs")
+```
+
+### Path scoping
+
+`fs.read` and `fs.write` are scoped separately, and each is a boolean or an array of paths:
+
+```json
+"fs.read": true                                         // the workspace folders
+"fs.read": ["{workspace}", "~/.local/state/omarchy"]    // the workspace and one extra directory
+"fs.write": ["{config}/themes"]                         // only ttt's themes directory
+"fs.read": ["*"]                                        // any path
+```
+
+An array grants exactly the listed paths: the workspace is included only when `{workspace}` is listed. Each entry is `*`, `{workspace}`, an absolute path, or a path starting with `~` (your home directory) or `{config}` (ttt's config directory, `~/.config/ttt` or `TTT_CONFIG_DIR`). The approval dialog shows every path, and a manifest with any other entry fails to load. Prefer the narrowest list your plugin needs.
+
+The `fs` functions expand a leading `~` or `{config}` in their path argument the same way, so a plugin never has to look up either directory:
+
+```lua
+local palette = fs.read("~/.local/state/omarchy/current/theme/colors.toml")
+fs.write("{config}/themes/omarchy.json", theme_json)
 ```
 
 ### `fs.read(path)`
@@ -2499,8 +2519,8 @@ Permissions are declared in the manifest's `permissions` object. Boolean permiss
 | `editor.diagnostics` | boolean | Publish editor diagnostics/squiggles via `ttt.diagnostics`. |
 | `editor.bookmarks` | boolean | Manage gutter bookmarks via `ttt.bookmarks`, and listen for the `bookmark.change` and `gutter.click` events. |
 | `editor.file_handlers` | boolean | Present binary file types in editor tabs via `file_handlers` in `ttt.register()`. |
-| `fs.read`        | boolean  | Read files and list directories (`ttt.fs` read functions). |
-| `fs.write`       | boolean  | Write files to the file system (`ttt.fs.write`).  |
+| `fs.read`        | boolean \| string[] | Read files and list directories (`ttt.fs` read functions). `true` allows the workspace; an array lists the allowed paths. See [Path scoping](#path-scoping). |
+| `fs.write`       | boolean \| string[] | Write files (`ttt.fs.write`). Scoped like `fs.read`. |
 | `system.exec`    | string[] | Execute specific system commands. List each allowed binary name. |
 | `system.env`     | boolean  | Read environment variables (`ttt.system.env`).    |
 | `network.http`   | boolean \| string[] | Make outbound HTTP requests (`ttt.net`). `true` allows any host; an array (`["api.github.com"]`) restricts requests to those hostnames. See [Network host scoping](#network-host-scoping). |

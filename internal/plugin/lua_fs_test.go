@@ -48,7 +48,7 @@ func TestFsRead(t *testing.T) {
 	mock := &mockFilesystemAPI{
 		files: map[string]string{"/tmp/test.txt": "file content"},
 	}
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: true}, mock)
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: FsAccess{Paths: []string{FsWorkspace}}}, mock)
 	defer cleanup()
 
 	err := p.State.DoString(`
@@ -65,7 +65,7 @@ func TestFsRead(t *testing.T) {
 
 func TestFsReadNotFound(t *testing.T) {
 	mock := &mockFilesystemAPI{files: map[string]string{}}
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: true}, mock)
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: FsAccess{Paths: []string{FsWorkspace}}}, mock)
 	defer cleanup()
 
 	err := p.State.DoString(`
@@ -87,7 +87,7 @@ func TestFsReadNotFound(t *testing.T) {
 
 func TestFsWrite(t *testing.T) {
 	mock := &mockFilesystemAPI{}
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsWrite: true}, mock)
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsWrite: FsAccess{Paths: []string{FsWorkspace}}}, mock)
 	defer cleanup()
 
 	err := p.State.DoString(`
@@ -103,7 +103,7 @@ func TestFsWrite(t *testing.T) {
 }
 
 func TestFsWriteErrorFormat(t *testing.T) {
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsWrite: true}, &mockFilesystemAPI{})
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsWrite: FsAccess{Paths: []string{FsWorkspace}}}, &mockFilesystemAPI{})
 	defer cleanup()
 
 	p.Filesystem = nil
@@ -129,7 +129,7 @@ func TestFsExists(t *testing.T) {
 	mock := &mockFilesystemAPI{
 		files: map[string]string{"/tmp/exists.txt": ""},
 	}
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: true}, mock)
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: FsAccess{Paths: []string{FsWorkspace}}}, mock)
 	defer cleanup()
 
 	err := p.State.DoString(`
@@ -157,7 +157,7 @@ func TestFsList(t *testing.T) {
 			},
 		},
 	}
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: true}, mock)
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: FsAccess{Paths: []string{FsWorkspace}}}, mock)
 	defer cleanup()
 
 	err := p.State.DoString(`
@@ -199,7 +199,7 @@ func TestFsReadWithoutPermission(t *testing.T) {
 
 func TestFsWriteWithoutPermission(t *testing.T) {
 	mock := &mockFilesystemAPI{}
-	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: true}, mock)
+	p, cleanup := setupTestPluginWithFs(PermissionSet{FsRead: FsAccess{Paths: []string{FsWorkspace}}}, mock)
 	defer cleanup()
 
 	err := p.State.DoString(`

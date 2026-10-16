@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ func TestDiffPermissionsEmpty(t *testing.T) {
 
 func TestDiffPermissionsNewBool(t *testing.T) {
 	granted := PermissionSet{PanelSidebar: true}
-	requested := PermissionSet{PanelSidebar: true, Commands: true, FsRead: true}
+	requested := PermissionSet{PanelSidebar: true, Commands: true, FsRead: FsAccess{Paths: []string{FsWorkspace}}}
 
 	diff := DiffPermissions(granted, requested)
 	if diff.IsEmpty() {
@@ -56,7 +57,7 @@ func TestDiffPermissionsNewExec(t *testing.T) {
 }
 
 func TestDiffPermissionsSubset(t *testing.T) {
-	granted := PermissionSet{PanelSidebar: true, Commands: true, FsRead: true}
+	granted := PermissionSet{PanelSidebar: true, Commands: true, FsRead: FsAccess{Paths: []string{FsWorkspace}}}
 	requested := PermissionSet{PanelSidebar: true}
 
 	diff := DiffPermissions(granted, requested)
@@ -243,5 +244,98 @@ func TestFileHandlersPermission(t *testing.T) {
 	entries := ps.DisplayEntries()
 	if len(entries) != 1 || entries[0].Name != "Handle file types" {
 		t.Fatalf("display entries = %+v, want Handle file types", entries)
+	}
+}
+
+func TestFsAccessUnmarshal(t *testing.T) {
+	cases := map[string][]string{
+		`{}`:                 nil,
+		`{"fs.read": false}`: nil,
+		`{"fs.read": true}`:  {FsWorkspace},
+		`{"fs.read": ["~/.local/state/omarchy"]}`: {"~/.local/state/omarchy"},
+		`{"fs.read": ["*"]}`:                      {FsAnyPath},
+	}
+	for src, want := range cases {
+		var ps PermissionSet
+		if err := json.Unmarshal([]byte(src), &ps); err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+		if !slices.Equal(ps.FsRead.Paths, want) {
+			t.Errorf("%s: paths = %v, want %v", src, ps.FsRead.Paths, want)
+		}
+	}
+}
+
+func TestFsAccessRejectsRelativePaths(t *testing.T) {
+	for _, src := range []string{`{"fs.write": ["themes"]}`, `{"fs.write": ["{home}/x"]}`, `{"fs.write": ["~x"]}`} {
+		var ps PermissionSet
+		if err := json.Unmarshal([]byte(src), &ps); err == nil {
+			t.Errorf("%s: expected an error", src)
+		}
+	}
+}
+
+func TestFsAccessMarshalRoundTrip(t *testing.T) {
+	cases := map[string]FsAccess{
+		`true`:                      {Paths: []string{FsWorkspace}},
+		`false`:                     {},
+		`["{workspace}","~/notes"]`: {Paths: []string{FsWorkspace, "~/notes"}},
+	}
+	for want, access := range cases {
+		data, err := json.Marshal(access)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != want {
+			t.Errorf("marshal %+v = %s, want %s", access, data, want)
+		}
+		var back FsAccess
+		if err := json.Unmarshal(data, &back); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(back.Paths, access.Paths) {
+			t.Errorf("round trip %s = %v, want %v", want, back.Paths, access.Paths)
+		}
+	}
+}
+
+func TestDiffPermissionsFsPaths(t *testing.T) {
+	granted := PermissionSet{FsRead: FsAccess{Paths: []string{FsWorkspace}}}
+	requested := PermissionSet{
+		FsRead:  FsAccess{Paths: []string{FsWorkspace, "~/.local/state/omarchy"}},
+		FsWrite: FsAccess{Paths: []string{"{config}/themes"}},
+	}
+	diff := DiffPermissions(granted, requested)
+	want := []PermissionDiffEntry{
+		{Name: "fs.read", Value: "~/.local/state/omarchy"},
+		{Name: "fs.write", Value: "{config}/themes"},
+	}
+	if !slices.Equal(diff.Entries, want) {
+		t.Errorf("diff = %v, want %v", diff.Entries, want)
+	}
+
+	diff = DiffPermissions(PermissionSet{FsRead: FsAccess{Paths: []string{FsAnyPath}}}, requested)
+	if !slices.Equal(diff.Entries, want[1:]) {
+		t.Errorf("* granted for fs.read: diff = %v, want only the fs.write path", diff.Entries)
+	}
+}
+
+func TestFsAccessResolve(t *testing.T) {
+	vars := FsVars{Workspace: []string{"/ws/a", "/ws/b"}, Config: "/cfg/ttt", Home: "/home/u"}
+
+	dirs, all := FsAccess{Paths: []string{"~/.local/state/omarchy", "{config}/themes", "/opt/data"}}.Resolve(vars)
+	if all {
+		t.Error("explicit paths must not grant every path")
+	}
+	want := []string{"/home/u/.local/state/omarchy", "/cfg/ttt/themes", "/opt/data"}
+	if !slices.Equal(dirs, want) {
+		t.Errorf("dirs = %v, want %v", dirs, want)
+	}
+
+	if dirs, _ := (FsAccess{Paths: []string{FsWorkspace}}).Resolve(vars); !slices.Equal(dirs, vars.Workspace) {
+		t.Errorf("{workspace} = %v, want %v", dirs, vars.Workspace)
+	}
+	if _, all := (FsAccess{Paths: []string{FsAnyPath}}).Resolve(vars); !all {
+		t.Error("* must grant every path")
 	}
 }

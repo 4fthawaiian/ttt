@@ -283,12 +283,8 @@ Docs: https://tttedit.dev
 			editor.BottomPanel.AddPanel(reg.ID, reg.Title, ui.NewWidgetAdapter(reg.Widget))
 		}
 		pluginManager.SetEditorAPI(app.NewPluginEditorAPI(editor))
-		pluginManager.SetFilesystemAPI(func(pluginDir string) plugin.FilesystemAPI {
-			roots := editor.Workspace.Paths()
-			if pluginDir != "" {
-				roots = append(roots, pluginDir)
-			}
-			return app.NewPluginFilesystemAPI(roots...)
+		pluginManager.SetFilesystemAPI(func(p *plugin.Plugin) plugin.FilesystemAPI {
+			return app.NewPluginFilesystemAPIFor(p, editor.Workspace.Paths())
 		})
 		pluginManager.SetSystemAPI(app.NewPluginSystemAPI())
 		pluginManager.SetNetworkAPI(app.NewPluginNetworkAPI())
