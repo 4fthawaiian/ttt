@@ -80,6 +80,16 @@
     "tags": ["notes", "scratchpad", "productivity", "utility"]
   },
   {
+    "name": "omarchy-theme",
+    "displayName": "Omarchy Theme",
+    "author": "danielmrdev",
+    "description": "Keep a TTT theme snapshot in sync with the active Omarchy palette",
+    "repo": "https://github.com/eugenioenko/ttt-plugins",
+    "path": "omarchy-theme",
+    "version": "0.1.0",
+    "tags": ["omarchy", "theme", "appearance", "colors"]
+  },
+  {
     "name": "pdf-viewer",
     "displayName": "PDF Viewer",
     "author": "sercanatalik",
