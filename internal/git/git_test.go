@@ -293,6 +293,30 @@ func TestRevisionIdentityAllowsUnbornRepository(t *testing.T) {
 	}
 }
 
+func TestCheckoutNewBranch(t *testing.T) {
+	dir := setupTestRepo(t)
+	want := "feature/new-branch"
+
+	if err := CheckoutNewBranch(dir, want); err != nil {
+		t.Fatal(err)
+	}
+	if got := BranchName(dir); got != want {
+		t.Fatalf("current branch = %q, want %q", got, want)
+	}
+}
+
+func TestCheckoutNewBranchRejectsInvalidName(t *testing.T) {
+	dir := setupTestRepo(t)
+	before := BranchName(dir)
+
+	if err := CheckoutNewBranch(dir, "invalid name"); err == nil {
+		t.Fatal("expected invalid branch name to fail")
+	}
+	if got := BranchName(dir); got != before {
+		t.Fatalf("current branch changed to %q after rejected branch name, want %q", got, before)
+	}
+}
+
 func TestReadRepositoryIdentityFindsLinkedWorktreeFromNestedDirectory(t *testing.T) {
 	repo := setupTestRepo(t)
 	writeFile(t, repo, "initial.txt", "initial\n")

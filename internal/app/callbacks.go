@@ -95,6 +95,7 @@ func (a *App) BuildChangesPanelMenu() []ui.ContextMenuItem {
 		{Label: "Pull", Command: "git.pull"},
 		{Label: "Push", Command: "git.push"},
 		{Label: "Sync", Command: "git.sync"},
+		{Label: "New Branch", Command: "git.newBranch"},
 		ui.MenuSep(),
 		{Label: "Open PR Diff", Command: "pr.openDiff"},
 		ui.MenuSep(),

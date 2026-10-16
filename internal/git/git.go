@@ -258,6 +258,14 @@ func Push(dir string) error {
 	return nil
 }
 
+func CheckoutNewBranch(dir, name string) error {
+	cmd := exec.Command("git", "-C", dir, "checkout", "-b", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func BranchName(dir string) string {
 	name, _ := BranchNameContext(context.Background(), dir)
 	return name

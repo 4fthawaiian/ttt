@@ -25,6 +25,10 @@ func OpCommit(message string) RepoOp {
 	return RepoOp{Name: "commit", Run: func(dir string) error { return git.Commit(dir, message) }}
 }
 
+func OpCreateBranch(name string) RepoOp {
+	return RepoOp{Name: "branch", Run: func(dir string) error { return git.CheckoutNewBranch(dir, name) }}
+}
+
 // RepoTask is a unit of background source-control work.
 type RepoTask struct {
 	Progress string // shown in the status bar while running, e.g. "Pulling"
@@ -94,7 +98,7 @@ func (a *App) HandleRepoOpResult(r *RepoOpResult) {
 func repositoryResourcesForTask(task RepoTask) RepositoryResource {
 	resources := RepositoryWorktree
 	for _, op := range task.Ops {
-		if op.Name == "commit" || op.Name == "pull" {
+		if op.Name == "commit" || op.Name == "pull" || op.Name == "branch" {
 			resources |= RepositoryHistory
 		}
 	}
