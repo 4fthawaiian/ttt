@@ -103,6 +103,27 @@ func (a *App) OpenPluginDetail(entry plugin.RemoteRegistryEntry) {
 		headerWidgets = append(headerWidgets, tagsLabel)
 	}
 
+	if installed {
+		if p := a.PluginManager.FindPlugin(entry.Name); p != nil && len(p.FileHandlers) > 0 {
+			handlerLabels := make([]string, 0, len(p.FileHandlers))
+			for _, handler := range p.FileHandlers {
+				label := handler.Title
+				if len(handler.Extensions) > 0 {
+					extensions := make([]string, len(handler.Extensions))
+					for i, ext := range handler.Extensions {
+						extensions[i] = "." + ext
+					}
+					label = strings.Join(extensions, ", ") + " (" + handler.Title + ")"
+				}
+				handlerLabels = append(handlerLabels, label)
+			}
+			headerWidgets = append(headerWidgets, widgets.NewLabelWidget(widgets.LabelConfig{
+				Text:  "Handles: " + strings.Join(handlerLabels, ", "),
+				Style: term.StyleMuted,
+			}))
+		}
+	}
+
 	header := widgets.NewVStackWidget(headerWidgets...)
 	header.Box.PaddingLeft = 1
 	header.Box.PaddingRight = 1
