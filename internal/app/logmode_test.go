@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eugenioenko/ttt/internal/asynctask"
 	"github.com/eugenioenko/ttt/internal/config"
 	"github.com/eugenioenko/ttt/internal/core/clipboard"
+	"github.com/eugenioenko/ttt/internal/core/logfile"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/eugenioenko/ttt/internal/ui"
 	"github.com/gdamore/tcell/v3"
@@ -294,6 +296,9 @@ func TestDefaultLargeFileModeAndEmptyZeroThreshold(t *testing.T) {
 	if err := f.Truncate((64 << 20) + 1); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.WriteAt([]byte(strings.Repeat("log entry\n", 64)), 0); err != nil {
+		t.Fatal(err)
+	}
 	f.Close()
 	a.EditorGroup.OpenFile(path)
 	if a.activeLogView() == nil || a.EditorGroup.ActiveBuffer() != nil {
@@ -307,5 +312,119 @@ func TestDefaultLargeFileModeAndEmptyZeroThreshold(t *testing.T) {
 	a.EditorGroup.OpenFile(empty)
 	if a.activeLogView() == nil {
 		t.Fatal("zero threshold excluded an empty file")
+	}
+}
+
+func TestLogAppendSearchCompletesWithoutRestartingOrNavigating(t *testing.T) {
+	a := buildTestApp(t, config.DefaultSettings())
+	defer a.CloseTasks()
+	defer a.closeLogViews()
+	path := filepath.Join(t.TempDir(), "append.log")
+	if err := os.WriteFile(path, []byte("needle\nneed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.openLogView(path)
+	lv := a.activeLogView()
+	var work, delivery []func()
+	a.tasks.post = func(fn func()) error { delivery = append(delivery, fn); return nil }
+	lv.search = NewTask[logfile.SearchResult](a, asynctask.TaskOptions{Run: func(fn func()) { work = append(work, fn) }})
+	runWork := func() {
+		t.Helper()
+		if len(work) != 1 {
+			t.Fatalf("queued searches=%d, want 1", len(work))
+		}
+		fn := work[0]
+		work = nil
+		fn()
+	}
+	apply := func() {
+		for len(delivery) > 0 {
+			fn := delivery[0]
+			delivery = delivery[1:]
+			fn()
+		}
+	}
+	appendText := func(text string) {
+		t.Helper()
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(text); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		a.HandleFileChanged(path)
+		a.handleLogProgress(&LogFileProgress{Path: path, View: lv})
+	}
+	a.OpenFind()
+	bar := a.Root.TopOverlayWidget().(*ui.FindBarWidget)
+	bar.Options = ui.SearchOptions{UseRegex: true}
+	bar.Input.SetText("needle$")
+	a.searchLog(lv, "needle$", bar.Options, false)
+	runWork()
+	version := lv.searchVersion
+	appendText("le\n")
+	if lv.searchVersion != version || len(work) != 0 {
+		t.Fatal("append restarted a pending full-file search")
+	}
+	apply()
+	if len(lv.result.Matches) != 1 || len(work) != 1 || lv.searchSize != 11 {
+		t.Fatalf("initial search did not finish before the append scan: %+v", lv.result)
+	}
+	lv.viewer.MoveToFileEdge(true, false)
+	version = lv.searchVersion
+	appendText("needle\n")
+	if lv.searchVersion != version || len(work) != 1 {
+		t.Fatal("another append canceled the incremental search")
+	}
+	cursor := lv.viewer.Cursor
+	runWork()
+	if len(lv.viewer.Matches) != 1 {
+		t.Fatal("running the worker cleared existing highlights")
+	}
+	apply()
+	if len(lv.result.Matches) != 3 || lv.result.Start != 7 || len(work) != 0 {
+		t.Fatalf("append matches were not merged from the unfinished line: %+v", lv.result)
+	}
+	if !lv.viewer.Following || lv.viewer.Cursor != cursor {
+		t.Fatal("incremental search moved away from the followed tail")
+	}
+	if len(bar.Matches) != 3 || bar.Progress != "" {
+		t.Fatal("find bar did not receive completed incremental results")
+	}
+	a.DismissDialog()
+	appendText("needle\n")
+	runWork()
+	apply()
+	if len(lv.result.Matches) != 4 || lv.result.Start != 21 || !lv.viewer.Following {
+		t.Fatal("closed find bar triggered a full rescan or lost following")
+	}
+}
+
+func TestLogAppendSearchReplacesChangedPartialMatchesAndHonorsCap(t *testing.T) {
+	a := buildTestApp(t, config.DefaultSettings())
+	defer a.CloseTasks()
+	defer a.closeLogViews()
+	path := filepath.Join(t.TempDir(), "partial.log")
+	if err := os.WriteFile(path, []byte("needle\nneedle"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.openLogView(path)
+	lv := a.activeLogView()
+	a.searchLog(lv, "needle$", ui.SearchOptions{UseRegex: true}, false)
+	if len(lv.result.Matches) != 2 {
+		t.Fatal("fixture must match the unfinished line")
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(" changed\n" + strings.Repeat("needle\n", logfile.MaxMatches))
+	f.Close()
+	a.HandleFileChanged(path)
+	a.handleLogProgress(&LogFileProgress{Path: path, View: lv})
+	if !lv.result.Limited || len(lv.result.Matches) != logfile.MaxMatches || lv.result.Matches[1].Offset == 7 {
+		t.Fatal("incremental merge retained an invalid partial match or exceeded the match cap")
 	}
 }

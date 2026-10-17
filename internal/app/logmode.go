@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"sync/atomic"
 
 	"github.com/eugenioenko/ttt/internal/asynctask"
@@ -20,6 +21,7 @@ import (
 type logView struct {
 	poster        atomic.Pointer[term.TcellScreen]
 	searchSize    int64
+	searchRE      *regexp.Regexp
 	file          *logfile.File
 	viewer        *ui.LogViewerWidget
 	pending       atomic.Bool
@@ -108,6 +110,7 @@ func (a *App) newLogViewer(path string) *ui.LogViewerWidget {
 			lv.search.Stop()
 		}
 		lv.query = ""
+		lv.searchRE = nil
 		lv.result = logfile.SearchResult{}
 		lv.viewer.Matches = nil
 	}
@@ -143,8 +146,10 @@ func (a *App) handleLogProgress(ev *LogFileProgress) {
 		a.StatusNotify(filepath.Base(ev.Path) + " was truncated or replaced; reading it again")
 	}
 	lv.viewer.RefreshProgress(reset)
-	if lv.query != "" && (reset || lv.searchSize != lv.file.Progress().Size) {
+	if reset && lv.query != "" {
 		a.searchLog(lv, lv.query, lv.options, true)
+	} else {
+		a.extendLogSearch(lv)
 	}
 	a.syncLogStatus()
 }
@@ -215,13 +220,14 @@ func (a *App) searchLog(lv *logView, query string, opts ui.SearchOptions, force 
 		return logFindMatches(lv.result.Matches)
 	}
 	lv.searchVersion++
-	version := lv.searchVersion
 	if lv.search == nil {
 		lv.search = NewTask[logfile.SearchResult](a, asynctask.TaskOptions{})
 	}
 	lv.search.Stop()
 	lv.query, lv.options, lv.current = query, opts, -1
 	lv.result = logfile.SearchResult{}
+	lv.searchSize = 0
+	lv.searchRE = nil
 	lv.viewer.Matches = nil
 	if query == "" {
 		return nil
@@ -238,30 +244,41 @@ func (a *App) searchLog(lv *logView, query string, opts ui.SearchOptions, force 
 		a.StatusWarn("Invalid regex: " + err.Error())
 		return nil
 	}
-	file := lv.file
-	lv.searchSize = file.Progress().Size
-	post := a.tasks.post
+	lv.searchRE = re
+	a.startLogSearch(lv, 0, true)
+	return logFindMatches(lv.result.Matches)
+}
+func (a *App) extendLogSearch(lv *logView) {
+	if lv.closed.Load() || lv.searchRE == nil || lv.result.Limited || lv.search.Pending() || lv.searchSize >= lv.file.Progress().Size {
+		return
+	}
+	lv.searchVersion++
+	a.startLogSearch(lv, lv.searchSize, false)
+}
+func (a *App) startLogSearch(lv *logView, start int64, navigate bool) {
+	file, re, version, post := lv.file, lv.searchRE, lv.searchVersion, a.tasks.post
 	lv.search.Schedule(func(ctx context.Context) (logfile.SearchResult, error) {
-		return file.Search(ctx, re, func(result logfile.SearchResult) {
+		return file.SearchFrom(ctx, re, start, func(result logfile.SearchResult) {
 			if post != nil {
-				post(func() { a.applyLogSearch(lv, version, result, false) })
+				post(func() { a.applyLogSearch(lv, version, result, false, navigate) })
 			}
 		})
 	}, func(result logfile.SearchResult, err error) {
+		if lv.closed.Load() || lv.searchVersion != version {
+			return
+		}
 		if err != nil {
-			if lv.closed.Load() || lv.searchVersion != version {
-				return
-			}
-			if bar, ok := a.Root.TopOverlayWidget().(*ui.FindBarWidget); ok {
+			if bar, ok := a.Root.TopOverlayWidget().(*ui.FindBarWidget); ok && a.activeLogView() == lv {
 				bar.Progress = ""
 			}
 			a.StatusWarn("Log search: " + err.Error())
 			return
 		}
-		a.applyLogSearch(lv, version, result, true)
+		a.applyLogSearch(lv, version, result, true, navigate)
+		a.extendLogSearch(lv)
 	})
-	return logFindMatches(lv.result.Matches)
 }
+
 func logFindMatches(matches []logfile.Match) []ui.FindMatch {
 	out := make([]ui.FindMatch, len(matches))
 	for i, m := range matches {
@@ -269,21 +286,37 @@ func logFindMatches(matches []logfile.Match) []ui.FindMatch {
 	}
 	return out
 }
-func (a *App) applyLogSearch(lv *logView, version uint64, result logfile.SearchResult, done bool) {
+func (a *App) applyLogSearch(lv *logView, version uint64, result logfile.SearchResult, done, navigate bool) {
 	if lv.closed.Load() || lv.searchVersion != version {
 		return
 	}
-	first := len(lv.result.Matches) == 0
-	lv.result = result
-	lv.viewer.Matches = result.Matches
+	first := navigate && len(lv.result.Matches) == 0
+	if done || navigate {
+		prefix := sort.Search(len(lv.result.Matches), func(i int) bool { return lv.result.Matches[i].Offset >= result.Start })
+		matches := make([]logfile.Match, 0, min(prefix+len(result.Matches), logfile.MaxMatches))
+		matches = append(matches, lv.result.Matches[:prefix]...)
+		count := min(len(result.Matches), logfile.MaxMatches-prefix)
+		matches = append(matches, result.Matches[:count]...)
+		result.Limited = result.Limited || count < len(result.Matches)
+		result.Matches = matches
+		lv.result = result
+		lv.viewer.Matches = matches
+		if lv.current >= len(matches) {
+			lv.current = max(len(matches)-1, 0)
+		}
+	}
+	if done {
+		lv.searchSize = result.Size
+	}
 	if a.activeLogView() != lv {
 		return
 	}
 	if bar, ok := a.Root.TopOverlayWidget().(*ui.FindBarWidget); ok && bar.Input.Text == lv.query && bar.Options == lv.options {
-		bar.Matches = logFindMatches(result.Matches)
+		bar.Matches = logFindMatches(lv.result.Matches)
+		bar.Current = max(lv.current, 0)
 		bar.Progress = ""
 		if !done {
-			bar.Progress = fmt.Sprintf(" %d%%", result.Scanned*100/max(result.Size, 1))
+			bar.Progress = fmt.Sprintf(" %d%%", (result.Scanned-result.Start)*100/max(result.Size-result.Start, 1))
 		}
 		if first && len(result.Matches) > 0 {
 			lv.current = 0

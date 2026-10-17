@@ -72,6 +72,7 @@ func (v *LogViewerWidget) load() {
 }
 func (v *LogViewerWidget) RefreshProgress(reset bool) {
 	if reset {
+		v.left = 0
 		v.top = 0
 		v.maxWidth = 0
 		v.Cursor = logfile.Position{}
@@ -79,7 +80,9 @@ func (v *LogViewerWidget) RefreshProgress(reset bool) {
 		v.Matches = nil
 	}
 	if v.Following {
+		left := v.left
 		v.edge(true, false)
+		v.left = left
 	} else {
 		v.load()
 	}
@@ -422,6 +425,9 @@ func (v *LogViewerWidget) HandleEvent(ev tcell.Event) EventResult {
 			v.Following = false
 			return EventCaptured
 		default:
+			if v.dragging && v.Anchor == v.Cursor {
+				v.Selecting = false
+			}
 			v.dragging = false
 		}
 		return EventConsumed

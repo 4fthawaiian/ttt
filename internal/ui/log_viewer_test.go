@@ -132,3 +132,69 @@ func TestLogViewerCtrlEndBeforeLineNumbersAreKnown(t *testing.T) {
 		t.Fatal("finishing the index moved the view or failed to fill line numbers")
 	}
 }
+
+func TestLogViewerAppendPreservesHorizontalScroll(t *testing.T) {
+	v := testLogViewer(t, strings.Repeat("long entry ", 20)+"\n", 40, 5)
+	v.Render(NewRenderSurface(makeGrid(40, 5), Rect{W: 40, H: 5}))
+	v.MoveToFileEdge(true, false)
+	v.HandleEvent(tcell.NewEventMouse(10, 1, tcell.WheelRight, 0))
+	left := v.left
+	if left == 0 {
+		t.Fatal("fixture did not scroll horizontally")
+	}
+	file := v.Source.(*logfile.File)
+	f, err := os.OpenFile(file.Path(), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString(strings.Repeat("next entry ", 20) + "\n")
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	v.RefreshProgress(false)
+	if !v.Following || v.left != left {
+		t.Fatalf("append changed horizontal scroll from %d to %d", left, v.left)
+	}
+	v.RefreshProgress(true)
+	if v.left != 0 {
+		t.Fatal("reset did not clear horizontal scroll")
+	}
+}
+func TestLogViewerClickCopyAndDrag(t *testing.T) {
+	v := testLogViewer(t, "first\nsecond\n", 40, 5)
+	v.Render(NewRenderSurface(makeGrid(40, 5), Rect{W: 40, H: 5}))
+	v.HandleEvent(tcell.NewEventMouse(v.gutter+1, 0, tcell.Button1, 0))
+	v.HandleEvent(tcell.NewEventMouse(v.gutter+1, 0, tcell.ButtonNone, 0))
+	start, end := v.Selection()
+	text, _, err := v.Source.(*logfile.File).Copy(start, end)
+	if err != nil || v.Selecting || text != "first\n" {
+		t.Fatalf("copy after click = %q, selecting=%v, err=%v", text, v.Selecting, err)
+	}
+	v.HandleEvent(tcell.NewEventMouse(v.gutter, 0, tcell.Button1, 0))
+	v.HandleEvent(tcell.NewEventMouse(v.gutter+3, 0, tcell.Button1, 0))
+	v.HandleEvent(tcell.NewEventMouse(v.gutter+3, 0, tcell.ButtonNone, 0))
+	start, end = v.Selection()
+	text, _, err = v.Source.(*logfile.File).Copy(start, end)
+	if err != nil || !v.Selecting || text != "fir" {
+		t.Fatalf("copy after drag = %q, selecting=%v, err=%v", text, v.Selecting, err)
+	}
+}
+func TestOpenInEditorKeepsCommittedLogTab(t *testing.T) {
+	v := testLogViewer(t, "log content\n", 40, 5)
+	path := v.Source.(*logfile.File).Path()
+	g := NewEditorGroupWidget(nil, 4, true, "compact")
+	g.OpenLogTab(path, v)
+	g.OpenFileInEditor(path)
+	other := filepath.Join(t.TempDir(), "other.txt")
+	if err := os.WriteFile(other, []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g.OpenFile(other)
+	if !g.SwitchToTabByPath(path) {
+		t.Fatal("opening another file replaced the confirmed editor tab")
+	}
+}

@@ -2,6 +2,7 @@ package logfile
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -20,12 +21,17 @@ type Match struct {
 	Col, Len int
 }
 type SearchResult struct {
+	Start         int64
 	Matches       []Match
 	Scanned, Size int64
 	Limited       bool
 }
 
 func (lf *File) Search(ctx context.Context, re *regexp.Regexp, progress func(SearchResult)) (SearchResult, error) {
+	return lf.SearchFrom(ctx, re, 0, progress)
+}
+
+func (lf *File) SearchFrom(ctx context.Context, re *regexp.Regexp, start int64, progress func(SearchResult)) (SearchResult, error) {
 	lf.mu.Lock()
 	if lf.closed {
 		lf.mu.Unlock()
@@ -33,16 +39,20 @@ func (lf *File) Search(ctx context.Context, re *regexp.Regexp, progress func(Sea
 	}
 	f, gen, size := lf.f, lf.gen, lf.size
 	lf.mu.Unlock()
-	result := SearchResult{Size: size}
+	start, err := searchLineStart(ctx, f, min(max(start, 0), size))
+	if err != nil {
+		return SearchResult{}, err
+	}
+	result := SearchResult{Start: start, Scanned: start, Size: size}
 	// The consumed context rune preserves ^ and word-boundary semantics when
 	// resuming after a match, without retaining arbitrarily long log entries.
 	resumed, err := regexp.Compile(`\A(?s:..*?)(` + re.String() + `)`)
 	if err != nil {
 		return result, err
 	}
-	buffer := bufio.NewReaderSize(io.NewSectionReader(f, 0, size), chunkSize)
+	buffer := bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), chunkSize)
 	lastNotice := time.Time{}
-	bufferOffset := int64(0)
+	bufferOffset := start
 	check := func(off int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -62,7 +72,7 @@ func (lf *File) Search(ctx context.Context, re *regexp.Regexp, progress func(Sea
 		}
 		return nil
 	}
-	lineStart := int64(0)
+	lineStart := start
 	for lineStart < size || size == 0 && lineStart == 0 {
 		searchStart := lineStart
 		previousEnd := int64(-1)
@@ -89,6 +99,12 @@ func (lf *File) Search(ctx context.Context, re *regexp.Regexp, progress func(Sea
 			}
 			reader := &searchLineReader{reader: buffer, offset: inputStart, check: check}
 			loc := pattern.FindReaderSubmatchIndex(reader)
+			if len(loc) == 0 {
+				// Anchored expressions can reject a line before consuming its newline.
+				for !reader.ended && reader.err == nil {
+					reader.ReadRune()
+				}
+			}
 			bufferOffset = reader.offset
 			if reader.err != nil {
 				return result, reader.err
@@ -143,17 +159,40 @@ func (lf *File) Search(ctx context.Context, re *regexp.Regexp, progress func(Sea
 	return result, nil
 }
 
+func searchLineStart(ctx context.Context, f *os.File, offset int64) (int64, error) {
+	buf := make([]byte, chunkSize)
+	for offset > 0 {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		from := max(offset-chunkSize, 0)
+		n, err := f.ReadAt(buf[:offset-from], from)
+		if err != nil {
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(buf[:n], '\n'); i >= 0 {
+			return from + int64(i) + 1, nil
+		}
+		offset = from
+	}
+	return 0, nil
+}
+
 type searchLineReader struct {
 	reader       *bufio.Reader
 	offset, next int64
 	check        func(int64) error
 	err          error
 	count        int
+	ended        bool
 }
 
 func (r *searchLineReader) ReadRune() (rune, int, error) {
 	if r.err != nil {
 		return 0, 0, r.err
+	}
+	if r.ended {
+		return 0, 0, io.EOF
 	}
 	if r.count%4096 == 0 {
 		if r.err = r.check(r.offset); r.err != nil {
@@ -172,6 +211,10 @@ func (r *searchLineReader) ReadRune() (rune, int, error) {
 	}
 	if ch == '\n' || err != nil {
 		r.next = r.offset
+		r.ended = true
+		if err != nil && err != io.EOF {
+			r.err = err
+		}
 		return 0, 0, io.EOF
 	}
 	return ch, width, nil

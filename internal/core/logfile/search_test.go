@@ -2,7 +2,9 @@ package logfile
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,7 +14,7 @@ import (
 func TestSearchMatchesRegexpAcrossEntireFile(t *testing.T) {
 	lines := []string{"ababa", "", "a a b", "界a界 b", "bad\xff\xfe a", "last"}
 	lf := openIndexed(t, writeFile(t, strings.Join(lines, "\r\n")))
-	for _, pattern := range []string{"a", "a*", "^", "$", "^|$", ".*", "a+|b", `\b[a-z]+\b`, "(?i)A", `(a)(b)?`, "界", `[ab]*?`, "(?m)^a", "a.*b|b"} {
+	for _, pattern := range []string{"a", "a*", "^", "$", "^|$", "^a$", "^ababa$", "^last$", ".*", "a+|b", `\b[a-z]+\b`, "(?i)A", `(a)(b)?`, "界", `[ab]*?`, "(?m)^a", "a.*b|b"} {
 		t.Run(pattern, func(t *testing.T) {
 			re := regexp.MustCompile(pattern)
 			got, err := lf.Search(context.Background(), re, nil)
@@ -95,5 +97,51 @@ func TestRefreshReplacesPartialLineWithoutAddingLine(t *testing.T) {
 	waitIndexed(t, lf)
 	if !lf.TakeReplaced() || lf.ReadLines(0, 1)[0] != "par" {
 		t.Fatal("shrinking an unfinished line did not reset the reader")
+	}
+}
+
+func TestSearchFromRescansOnlyTheLastIncompleteLine(t *testing.T) {
+	for _, tail := range []string{"", "nee", strings.Repeat("x", chunkSize*3) + "nee", "needle\r", "needle"} {
+		t.Run(fmt.Sprintf("tail-%d", len(tail)), func(t *testing.T) {
+			prefix := "old needle\n"
+			path := writeFile(t, prefix+tail)
+			lf := openIndexed(t, path)
+			oldSize := lf.Progress().Size
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.WriteString("dle\nnew needle\n"); err != nil {
+				t.Fatal(err)
+			}
+			f.Close()
+			if err := lf.Refresh(); err != nil {
+				t.Fatal(err)
+			}
+			for _, pattern := range []string{"needle", "needle$", "^needle$"} {
+				re := regexp.MustCompile(pattern)
+				got, err := lf.SearchFrom(context.Background(), re, oldSize, func(progress SearchResult) {
+					if progress.Start != int64(len(prefix)) || progress.Scanned < progress.Start {
+						t.Fatalf("invalid incremental range: %+v", progress)
+					}
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				full, err := lf.Search(context.Background(), re, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var want []Match
+				for _, m := range full.Matches {
+					if m.Offset >= int64(len(prefix)) {
+						want = append(want, m)
+					}
+				}
+				if got.Start != int64(len(prefix)) || !reflect.DeepEqual(got.Matches, want) {
+					t.Fatalf("incremental %q = %+v, want %v", pattern, got, want)
+				}
+			}
+		})
 	}
 }

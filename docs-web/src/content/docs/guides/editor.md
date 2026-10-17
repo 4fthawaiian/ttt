@@ -9,7 +9,7 @@ TTT highlights code with [textmate-go](https://github.com/eugenioenko/textmate-g
 
 ## Large Files and Log Mode
 
-Files over 64 MiB open in **log mode**, a read-only viewer that reads visible lines from disk. Use **Open in Log Mode** in the command palette or a file's Explorer context menu for smaller files. Set `editor.largeFiles.logModeMinMB` to another size, `0` for every file, or `false` for manual activation only. The threshold is checked when opening a new tab; existing editor tabs keep their mode.
+Files over 64 MiB open in **log mode**, a read-only viewer that reads visible lines from disk. Use **Open in Log Mode** in the command palette or a file's Explorer context menu for smaller files. Set `editor.largeFiles.logModeMinMB` to another size, `0` for every text file, or `false` for manual activation only. The threshold is checked when opening a new tab; existing editor tabs keep their mode.
 
 **Ctrl+End** reads the tail immediately and follows appended lines. Scrolling up or pressing Page Up pauses following; Ctrl+End resumes. The **LOG** item before the cursor position shows following and indexing progress. Click it, or run **Open in Editor**, to confirm loading the file into an editable tab. Large loads warn about time and memory use.
 

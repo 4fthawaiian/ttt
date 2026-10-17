@@ -410,12 +410,6 @@ func (g *EditorGroupWidget) openFile(path string, forceEditor bool) {
 			return
 		}
 	}
-	if !forceEditor && g.LargeFileHandler != nil {
-		if content := g.LargeFileHandler(path); content != nil {
-			g.openContentFileTab(path, content)
-			return
-		}
-	}
 	if !forceEditor {
 		switch kind, head := sniffFileKind(path); kind {
 		case fileKindImage:
@@ -430,6 +424,12 @@ func (g *EditorGroupWidget) openFile(path string, forceEditor bool) {
 				}
 			}
 			g.openContentFileTab(path, NewBinaryFileWidget(path))
+			return
+		}
+	}
+	if !forceEditor && g.LargeFileHandler != nil {
+		if content := g.LargeFileHandler(path); content != nil {
+			g.openContentFileTab(path, content)
 			return
 		}
 	}
@@ -480,6 +480,7 @@ func (g *EditorGroupWidget) openFile(path string, forceEditor bool) {
 			if t.FilePath == path {
 				g.notifyContentTabClose(t)
 				newTab.ID = t.ID
+				newTab.Preview = t.Preview
 				g.tabs[i] = newTab
 				g.SwitchTab(i)
 				g.syncTabs()
