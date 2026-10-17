@@ -1,80 +1,90 @@
-// Package logfile reads lines of a large, growing file on demand, without
-// loading it into memory.
 package logfile
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
-	"strings"
+	"sort"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
 const (
-	// Stride is how many lines apart the index records an offset.
-	Stride    = 256
-	chunkSize = 1 << 20
-	// MaxLineBytes caps how much of one line is returned for display.
+	Stride       = 256
+	chunkSize    = 64 << 10
 	MaxLineBytes = 1 << 20
+	cacheChunks  = 8
 )
 
-// File indexes a file in the background and reads line ranges with ReadAt.
-// It never maps the file: a mapped file truncated by copytruncate raises
-// SIGBUS on access past its new end.
-type File struct {
-	path       string
-	onProgress func()
-
-	mu       sync.Mutex
-	f        *os.File
-	gen      int
-	marks    []int64 // marks[k] is the offset of line k*Stride
-	lines    int     // complete lines indexed
-	indexed  int64   // offset just past the last indexed newline
-	size     int64   // file size when indexing last reached the end
-	running  bool
-	replaced bool
+type Progress struct {
+	Scanned, Size int64
+	Lines         int
+	Indexing      bool
+	Generation    uint64
+	Err           error
 }
 
-// Open starts indexing path. onProgress is called from the indexing goroutine
-// whenever more lines are indexed or the file is reset.
+type Row struct {
+	Offset, Next int64
+	Text         string
+	Truncated    bool
+}
+
+type cachedChunk struct {
+	offset int64
+	data   []byte
+}
+type longLine struct{ start, end int64 }
+
+// ReadAt avoids SIGBUS when a writer truncates a file while it is open.
+type File struct {
+	path                      string
+	onProgress                func()
+	mu                        sync.Mutex
+	f                         *os.File
+	gen                       uint64
+	marks                     []int64
+	longLines                 []longLine
+	lines                     int
+	indexed, scanned, size    int64
+	running, replaced, closed bool
+	err                       error
+	cache                     []cachedChunk
+	workers                   sync.WaitGroup
+}
+
 func Open(path string, onProgress func()) (*File, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	lf := &File{path: path, onProgress: onProgress, f: f, marks: []int64{0}}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		if err == nil {
+			err = errors.New("not a regular file")
+		}
+		return nil, err
+	}
+	lf := &File{path: path, f: f, onProgress: onProgress, marks: []int64{0}, size: info.Size()}
 	lf.startLocked()
 	return lf, nil
 }
 
 func (lf *File) Path() string { return lf.path }
-
-// Lines returns how many lines are known: the indexed lines, plus a final line
-// without a newline once indexing has reached the end of the file.
-func (lf *File) Lines() int {
+func (lf *File) Progress() Progress {
 	lf.mu.Lock()
 	defer lf.mu.Unlock()
-	return lf.linesLocked()
-}
-
-func (lf *File) linesLocked() int {
 	n := lf.lines
-	if !lf.running && lf.size > lf.indexed {
+	if lf.scanned > lf.indexed {
 		n++
 	}
-	return max(n, 1)
+	return Progress{Scanned: lf.scanned, Size: lf.size, Lines: max(n, 1), Indexing: lf.running, Generation: lf.gen, Err: lf.err}
 }
-
-// Indexing reports whether the background index has not reached the end yet.
-func (lf *File) Indexing() bool {
-	lf.mu.Lock()
-	defer lf.mu.Unlock()
-	return lf.running
-}
-
-// TakeReplaced reports whether the file was truncated or replaced since the
-// last call, and clears the flag.
+func (lf *File) Lines() int     { return lf.Progress().Lines }
+func (lf *File) Indexing() bool { return lf.Progress().Indexing }
 func (lf *File) TakeReplaced() bool {
 	lf.mu.Lock()
 	defer lf.mu.Unlock()
@@ -83,57 +93,92 @@ func (lf *File) TakeReplaced() bool {
 	return r
 }
 
-// Refresh checks the file on disk: a grown file indexes only the new bytes;
-// a shrunk or replaced one is indexed again from the start.
-func (lf *File) Refresh() {
+func (lf *File) Refresh() error {
 	info, err := os.Stat(lf.path)
 	if err != nil {
-		return
+		return err
 	}
 	lf.mu.Lock()
-	defer lf.mu.Unlock()
-	open, ferr := lf.f.Stat()
-	if ferr != nil || !os.SameFile(open, info) || info.Size() < lf.indexed {
-		if f, err := os.Open(lf.path); err == nil {
-			lf.f.Close()
-			lf.f = f
-		}
-		lf.gen++
-		lf.marks, lf.lines, lf.indexed, lf.size = []int64{0}, 0, 0, 0
-		lf.replaced = true
-		lf.running = false
+	if lf.closed {
+		lf.mu.Unlock()
+		return os.ErrClosed
 	}
-	if !lf.running && info.Size() != lf.size {
+	opened, err := lf.f.Stat()
+	if err != nil {
+		lf.mu.Unlock()
+		return err
+	}
+	if !os.SameFile(opened, info) || info.Size() < max(lf.size, lf.scanned) {
+		f, err := os.Open(lf.path)
+		if err != nil {
+			lf.mu.Unlock()
+			return err
+		}
+		lf.f.Close()
+		lf.f = f
+		lf.gen++
+		lf.marks, lf.longLines, lf.lines, lf.indexed, lf.scanned = []int64{0}, nil, 0, 0, 0
+		lf.running = false
+		lf.replaced = true
+	}
+	lf.size = info.Size()
+	lf.cache = nil
+	if !lf.running && (lf.scanned < lf.size || lf.replaced) {
 		lf.startLocked()
 	}
+	lf.mu.Unlock()
+	lf.notify()
+	return nil
 }
 
 func (lf *File) Close() {
 	lf.mu.Lock()
-	defer lf.mu.Unlock()
-	lf.gen++
-	lf.f.Close()
+	if !lf.closed {
+		lf.closed = true
+		lf.gen++
+		lf.f.Close()
+		lf.cache = nil
+	}
+	lf.mu.Unlock()
+	lf.workers.Wait()
 }
-
+func (lf *File) notify() {
+	if lf.onProgress != nil {
+		lf.onProgress()
+	}
+}
 func (lf *File) startLocked() {
 	lf.running = true
-	go lf.index(lf.gen, lf.f, lf.indexed, lf.lines)
+	lf.err = nil
+	lf.workers.Add(1)
+	go lf.index(lf.gen, lf.f, lf.scanned, lf.indexed, lf.lines)
 }
-
-func (lf *File) index(gen int, f *os.File, off int64, lines int) {
-	buf := make([]byte, chunkSize)
-	lastNL := off
-	var marks []int64
+func (lf *File) index(gen uint64, f *os.File, off, lastNL int64, lines int) {
+	defer lf.workers.Done()
+	buf := make([]byte, 1<<20)
+	lastNotice := time.Time{}
 	for {
-		n, err := f.ReadAt(buf, off)
+		lf.mu.Lock()
+		if lf.closed || lf.gen != gen {
+			lf.mu.Unlock()
+			return
+		}
+		remaining := max(lf.size-off, 0)
+		lf.mu.Unlock()
+		n, err := f.ReadAt(buf[:min(int64(len(buf)), remaining)], off)
 		data := buf[:n]
 		pos := off
+		var marks []int64
+		var longs []longLine
 		for {
 			i := bytes.IndexByte(data, '\n')
 			if i < 0 {
 				break
 			}
 			pos += int64(i) + 1
+			if pos-lastNL > MaxLineBytes {
+				longs = append(longs, longLine{lastNL, pos})
+			}
 			lastNL = pos
 			data = data[i+1:]
 			lines++
@@ -142,22 +187,28 @@ func (lf *File) index(gen int, f *os.File, off int64, lines int) {
 			}
 		}
 		off += int64(n)
-		done := n < len(buf) || err != nil
 		lf.mu.Lock()
-		if lf.gen != gen {
+		if lf.closed || lf.gen != gen {
 			lf.mu.Unlock()
 			return
 		}
 		lf.marks = append(lf.marks, marks...)
-		marks = marks[:0]
-		lf.lines, lf.indexed = lines, lastNL
+		lf.longLines = append(lf.longLines, longs...)
+		lf.lines, lf.indexed, lf.scanned = lines, lastNL, off
+		done := off >= lf.size || err != nil
+		if done && lf.size > off && err == nil && n > 0 {
+			done = false
+		}
 		if done {
 			lf.running = false
-			lf.size = off
+			if err != nil && !errors.Is(err, io.EOF) {
+				lf.err = err
+			}
 		}
 		lf.mu.Unlock()
-		if lf.onProgress != nil {
-			lf.onProgress()
+		if done || time.Since(lastNotice) >= 50*time.Millisecond {
+			lf.notify()
+			lastNotice = time.Now()
 		}
 		if done {
 			return
@@ -165,63 +216,210 @@ func (lf *File) index(gen int, f *os.File, off int64, lines int) {
 	}
 }
 
-// ReadLines returns up to n lines starting at line start. Lines past the
-// indexed part are read too when they are already on disk.
-func (lf *File) ReadLines(start, n int) []string {
-	if n <= 0 || start < 0 {
-		return nil
-	}
+func (lf *File) readChunk(off int64) ([]byte, error) {
+	base := off / int64(chunkSize) * int64(chunkSize)
 	lf.mu.Lock()
-	k := min(start/Stride, len(lf.marks)-1)
-	off := lf.marks[k]
-	skip := start - k*Stride
-	f := lf.f
-	lf.mu.Unlock()
+	defer lf.mu.Unlock()
+	if lf.closed {
+		return nil, os.ErrClosed
+	}
+	for i, c := range lf.cache {
+		if c.offset == base {
+			copy(lf.cache[1:i+1], lf.cache[:i])
+			lf.cache[0] = c
+			return c.data, nil
+		}
+	}
+	data := make([]byte, chunkSize)
+	n, err := lf.f.ReadAt(data, base)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	data = data[:n]
+	lf.cache = append(lf.cache, cachedChunk{})
+	copy(lf.cache[1:], lf.cache[:len(lf.cache)-1])
+	lf.cache[0] = cachedChunk{base, data}
+	if len(lf.cache) > cacheChunks {
+		lf.cache = lf.cache[:cacheChunks]
+	}
+	return data, nil
+}
 
-	out := make([]string, 0, n)
-	buf := make([]byte, 256*1024)
-	var partial []byte
-	for len(out) < n {
-		m, err := f.ReadAt(buf, off)
-		data := buf[:m]
-		off += int64(m)
-		for len(out) < n {
-			i := bytes.IndexByte(data, '\n')
-			if i < 0 {
-				if len(partial) < MaxLineBytes {
-					partial = append(partial, data[:min(len(data), MaxLineBytes-len(partial))]...)
-				}
+func (lf *File) line(off int64) (Row, error) {
+	row := Row{Offset: off, Next: off}
+	size := lf.Progress().Size
+	var text []byte
+	for off < size {
+		data, err := lf.readChunk(off)
+		if err != nil {
+			return row, err
+		}
+		pos := int(off % chunkSize)
+		if pos >= len(data) {
+			break
+		}
+		data = data[pos:]
+		i := bytes.IndexByte(data, '\n')
+		part := data
+		if i >= 0 {
+			part = data[:i]
+		}
+		take := min(len(part), MaxLineBytes-len(text))
+		text = append(text, part[:take]...)
+		row.Truncated = row.Truncated || take < len(part)
+		off += int64(len(part))
+		if i >= 0 {
+			off++
+			break
+		}
+		if len(text) == MaxLineBytes && off >= size {
+			break
+		}
+		if len(text) == MaxLineBytes {
+			next, err := lf.readChunk(off)
+			pos := int(off % chunkSize)
+			if err == nil && pos < len(next) && next[pos] == '\n' {
+				off++
 				break
 			}
-			line := data[:i]
-			if len(partial) > 0 {
-				line = append(partial, line[:min(len(line), max(0, MaxLineBytes-len(partial)))]...)
-				partial = partial[:0]
-			}
-			if skip > 0 {
-				skip--
+			lf.mu.Lock()
+			k := sort.Search(len(lf.longLines), func(i int) bool { return lf.longLines[i].start >= row.Offset })
+			if k < len(lf.longLines) && lf.longLines[k].start == row.Offset {
+				off = lf.longLines[k].end
+			} else if !lf.running {
+				off = size
 			} else {
-				out = append(out, displayLine(line))
+				// The index will supply the next line's offset without scanning a
+				// multi-gigabyte line on the UI goroutine.
+				off = -1
 			}
-			data = data[i+1:]
-		}
-		if m < len(buf) || err != nil {
-			if len(out) < n && skip == 0 && (len(partial) > 0 || start == 0 && len(out) == 0) {
-				out = append(out, displayLine(partial))
-			}
+			lf.mu.Unlock()
+			row.Truncated = true
 			break
 		}
 	}
-	return out
+	row.Text = displayLine(text)
+	row.Next = off
+	return row, nil
 }
 
+func (lf *File) ReadRows(offset int64, n int) ([]Row, error) {
+	if n <= 0 || offset < 0 {
+		return nil, nil
+	}
+	p := lf.Progress()
+	rows := make([]Row, 0, n)
+	bytesRead := 0
+	for len(rows) < n && (offset < p.Size || offset == 0 && len(rows) == 0) {
+		row, err := lf.line(offset)
+		if err != nil {
+			return rows, err
+		}
+		rows = append(rows, row)
+		bytesRead += len(row.Text)
+		if row.Next <= offset || bytesRead >= 2*MaxLineBytes {
+			break
+		}
+		offset = row.Next
+	}
+	return rows, nil
+}
+
+func (lf *File) OffsetForLine(line int) (int64, bool) {
+	lf.mu.Lock()
+	if line < 0 || line >= lf.lines && !(line == lf.lines && lf.scanned > lf.indexed) && line != 0 {
+		lf.mu.Unlock()
+		return 0, false
+	}
+	k := min(line/Stride, len(lf.marks)-1)
+	off := lf.marks[k]
+	lf.mu.Unlock()
+	for n := k * Stride; n < line; n++ {
+		row, err := lf.line(off)
+		if err != nil || row.Next <= off {
+			return 0, false
+		}
+		off = row.Next
+	}
+	return off, true
+}
+
+func (lf *File) LineNumber(offset int64) (int, bool) {
+	lf.mu.Lock()
+	if offset > lf.scanned || offset == lf.scanned && lf.running && offset > 0 {
+		lf.mu.Unlock()
+		return 0, false
+	}
+	k := sort.Search(len(lf.marks), func(i int) bool { return lf.marks[i] > offset }) - 1
+	k = max(k, 0)
+	off := lf.marks[k]
+	lf.mu.Unlock()
+	line := k * Stride
+	for off < offset {
+		row, err := lf.line(off)
+		if err != nil || row.Next <= off || row.Next > offset {
+			return line, err == nil
+		}
+		off = row.Next
+		line++
+	}
+	return line, true
+}
+
+// Previous returns an offset even while the forward index is still incomplete.
+func (lf *File) Previous(offset int64, n int) int64 {
+	if n <= 0 {
+		return offset
+	}
+	off := max(offset-1, 0)
+	remaining := n
+	for off > 0 && remaining > 0 {
+		base := (off - 1) / chunkSize * chunkSize
+		data, err := lf.readChunk(base)
+		if err != nil {
+			return 0
+		}
+		data = data[:min(int(off-base), len(data))]
+		for len(data) > 0 {
+			i := bytes.LastIndexByte(data, '\n')
+			if i < 0 {
+				break
+			}
+			remaining--
+			if remaining == 0 {
+				return base + int64(i) + 1
+			}
+			data = data[:i]
+		}
+		off = base
+		if offset-off > 2*MaxLineBytes {
+			return off
+		}
+	}
+	return 0
+}
+
+func (lf *File) Tail(n int) int64 {
+	p := lf.Progress()
+	return lf.Previous(p.Size, max(n, 1))
+}
+
+func (lf *File) ReadLines(start, n int) []string {
+	off, ok := lf.OffsetForLine(start)
+	if !ok {
+		return nil
+	}
+	rows, _ := lf.ReadRows(off, n)
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		out[i] = row.Text
+	}
+	return out
+}
 func displayLine(b []byte) string {
 	b = bytes.TrimSuffix(b, []byte{'\r'})
-	if len(b) > MaxLineBytes {
-		b = b[:MaxLineBytes]
-	}
 	if utf8.Valid(b) {
 		return string(b)
 	}
-	return strings.ToValidUTF8(string(b), "�")
+	return string(bytes.Runes(b))
 }

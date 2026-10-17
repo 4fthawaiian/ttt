@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -159,7 +160,7 @@ func TestRefreshFollowsReplacedFile(t *testing.T) {
 }
 
 func TestLineLongerThanAChunk(t *testing.T) {
-	long := strings.Repeat("y", chunkSize+100)
+	long := strings.Repeat("y", MaxLineBytes+100)
 	lf := openIndexed(t, writeFile(t, "a\n"+long+"\nb\n"))
 	if got := lf.Lines(); got != 3 {
 		t.Fatalf("Lines() = %d, want 3", got)
@@ -173,5 +174,64 @@ func TestLineLongerThanAChunk(t *testing.T) {
 			}
 			return l
 		}())
+	}
+}
+
+func TestTailAndAppendWhileIndexing(t *testing.T) {
+	content := strings.Repeat("ordinary log entry\n", 200000) + "last entry\n"
+	path := writeFile(t, content)
+	reached, release := make(chan struct{}), make(chan struct{})
+	var held atomic.Bool
+	lf, err := Open(path, func() {
+		if held.CompareAndSwap(false, true) {
+			close(reached)
+			<-release
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	defer close(release)
+	<-reached
+	if !lf.Indexing() {
+		t.Fatal("test did not hold the index incomplete")
+	}
+	rows, err := lf.ReadRows(lf.Tail(2), 2)
+	if err != nil || len(rows) != 2 || rows[1].Text != "last entry" {
+		t.Fatalf("tail while indexing = %v, %v", rows, err)
+	}
+	if _, known := lf.LineNumber(rows[0].Offset); known {
+		t.Fatal("tail line number should be unknown before the index reaches it")
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("appended\n")
+	f.Close()
+	if err := lf.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	// Reads never wait for the index callback to return.
+	rows, err = lf.ReadRows(lf.Tail(1), 1)
+	if err != nil || len(rows) != 1 || rows[0].Text != "appended" {
+		t.Fatalf("tail after append = %v, %v", rows, err)
+	}
+}
+
+func TestCacheStaysBoundedAndHandlesEmptyLines(t *testing.T) {
+	lf := openIndexed(t, writeFile(t, "\n\n"+strings.Repeat(strings.Repeat("x", 100)+"\n", 10000)))
+	if got := lf.ReadLines(0, 3); len(got) != 3 || got[0] != "" || got[1] != "" {
+		t.Fatalf("empty lines = %q", got)
+	}
+	for i := 0; i < 10000; i += Stride {
+		lf.ReadLines(i, 1)
+	}
+	lf.mu.Lock()
+	n := len(lf.cache)
+	lf.mu.Unlock()
+	if n > cacheChunks {
+		t.Fatalf("cache has %d chunks", n)
 	}
 }

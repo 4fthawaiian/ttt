@@ -60,14 +60,6 @@ func (e *EditorPaneWidget) MoveToFileEdge(end, shift bool) {
 	if e.Buf == nil || len(e.Buf.Lines) == 0 {
 		return
 	}
-	if e.Window != nil && e.Window.GoTo != nil && !shift {
-		if end {
-			e.Window.GoTo(e.documentLines() - 1)
-		} else {
-			e.Window.GoTo(0)
-		}
-		return
-	}
 	e.collapseMulti()
 	e.startOrExtendSelection(shift)
 	if end {

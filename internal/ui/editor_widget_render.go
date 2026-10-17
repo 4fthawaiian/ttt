@@ -34,7 +34,7 @@ func (e *EditorPaneWidget) Render(surface Surface) {
 	}
 	visibleCount := e.rowLayout(editorW).total()
 
-	showScrollbar := !e.Embedded && max(visibleCount, e.documentLines()) > h
+	showScrollbar := !e.Embedded && visibleCount > h
 	if showScrollbar {
 		editorW--
 	}
@@ -144,7 +144,7 @@ func (e *EditorPaneWidget) Render(surface Surface) {
 			} else {
 				num := 0
 				if lineIdx < totalLines {
-					num = e.lineNumberBase() + lineIdx + 1
+					num = lineIdx + 1
 				}
 				e.drawGutterNumber(surface, y, gutterW, num, term.Cell{Style: gutterStyle})
 			}
@@ -326,10 +326,6 @@ func (e *EditorPaneWidget) Render(surface Surface) {
 		e.scrollbar.Height = h
 		e.scrollbar.TotalItems = visibleCount + h - 1
 		e.scrollbar.TopItem = topRow
-		if e.Window != nil {
-			e.scrollbar.TotalItems = e.documentLines() + h - 1
-			e.scrollbar.TopItem = e.Window.Start + topRow
-		}
 		e.scrollbar.Marks = nil
 		if e.scrollMarksEnabled() {
 			e.scrollbar.Marks = e.gitScrollMarks(layout)
