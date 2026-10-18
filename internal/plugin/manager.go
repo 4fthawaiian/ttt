@@ -113,7 +113,6 @@ func (m *Manager) LoadAll() []*Plugin {
 
 			diff := DiffPermissions(regEntry.Permissions, manifest.Permissions)
 			if !diff.IsEmpty() {
-				regEntry.Enabled = false
 				needsApproval = append(needsApproval, p)
 				continue
 			}
@@ -512,7 +511,13 @@ func (m *Manager) DenyPlugin(p *Plugin) error {
 	if m.registry == nil {
 		return nil
 	}
-	m.registry.AddOrUpdate(p.Manifest.Name, p.Manifest.DisplayName, p.Repo, p.RepoPath, p.Manifest.Version, p.Manifest.Permissions)
+	// Denied additions must not become grants, and dropped permissions must
+	// require fresh approval if requested again.
+	var approved PermissionSet
+	if entry != nil {
+		approved = IntersectPermissions(entry.Permissions, p.Manifest.Permissions)
+	}
+	m.registry.AddOrUpdate(p.Manifest.Name, p.Manifest.DisplayName, p.Repo, p.RepoPath, p.Manifest.Version, approved)
 	m.registry.SetEnabled(p.Manifest.Name, false)
 	return m.registry.Save()
 }
@@ -616,8 +621,6 @@ func (m *Manager) ApplyUpdate(u *PluginUpdate) (*Plugin, bool, error) {
 			m.plugins[idx].Destroy()
 			m.plugins = slices.Delete(m.plugins, idx, idx+1)
 		}
-		regEntry.Enabled = false
-		m.registry.Save()
 		return &Plugin{Name: u.manifest.Name, Dir: u.dir, Repo: u.repo, RepoPath: u.repoPath, Manifest: u.manifest}, true, nil
 	}
 
