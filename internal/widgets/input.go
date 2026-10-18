@@ -469,10 +469,10 @@ func (inp *InputWidget) handleKey(ev *tcell.EventKey) EventResult {
 		inp.selectAll()
 		return EventConsumed
 	case tcell.KeyCtrlC:
-		inp.copySelection()
+		inp.CopySelection()
 		return EventConsumed
 	case tcell.KeyCtrlX:
-		inp.cutSelection()
+		inp.CutSelection()
 		return EventConsumed
 	}
 	return EventIgnored
@@ -604,7 +604,9 @@ func (inp *InputWidget) selectAll() {
 	inp.cursorPos = len(runes)
 }
 
-func (inp *InputWidget) copySelection() {
+// CopySelection copies the selected text to the clipboard. It does nothing
+// when there is no selection.
+func (inp *InputWidget) CopySelection() {
 	if !inp.hasSelection() {
 		return
 	}
@@ -613,11 +615,13 @@ func (inp *InputWidget) copySelection() {
 	clipboard.Set(string(runes[lo:hi]))
 }
 
-func (inp *InputWidget) cutSelection() {
+// CutSelection copies the selected text to the clipboard and removes it from
+// the input. It does nothing when there is no selection.
+func (inp *InputWidget) CutSelection() {
 	if !inp.hasSelection() {
 		return
 	}
-	inp.copySelection()
+	inp.CopySelection()
 	inp.deleteSelection()
 }
 

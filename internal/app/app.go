@@ -770,6 +770,10 @@ func (a *App) Copy() {
 			return
 		}
 	}
+	if inp := a.focusedWidgetInput(); inp != nil {
+		inp.CopySelection()
+		return
+	}
 	a.EditorGroup.Copy()
 }
 
@@ -783,6 +787,10 @@ func (a *App) Cut() {
 			inp.CutSelection()
 			return
 		}
+	}
+	if inp := a.focusedWidgetInput(); inp != nil {
+		inp.CutSelection()
+		return
 	}
 	a.EditorGroup.Cut()
 }
@@ -817,7 +825,8 @@ type widgetInputHolder interface {
 }
 
 // focusedWidgetInput returns the widgets.InputWidget with keyboard focus
-// inside a focused widget adapter or plugin editor tab, or nil.
+// inside a focused widget adapter or plugin editor tab, or nil. Copy, Cut
+// and Paste use it so clipboard commands act on that input, not the editor.
 func (a *App) focusedWidgetInput() *widgets.InputWidget {
 	var w widgets.Widget
 	switch f := a.Root.Focused.(type) {
