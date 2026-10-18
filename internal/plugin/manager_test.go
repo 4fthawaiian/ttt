@@ -1,8 +1,10 @@
 package plugin
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -317,48 +319,6 @@ func TestDroppedPermissionIsRevoked(t *testing.T) {
 	}
 }
 
-type hostCheckedNetworkStub struct {
-	mockNetworkAPI
-	checks []func(string) error
-}
-
-func (s *hostCheckedNetworkStub) ForPlugin(allowHost func(string) error) NetworkAPI {
-	s.checks = append(s.checks, allowHost)
-	return &s.mockNetworkAPI
-}
-
-// A plugin's init code runs before the app wires it, so the manager must
-// already give it a network API that knows its hosts.
-func TestManagerGivesEachPluginANetworkCheckedAgainstItsHosts(t *testing.T) {
-	m, pluginsDir := newTestManager(t)
-	stub := &hostCheckedNetworkStub{}
-	m.SetNetworkAPI(stub)
-	dir := writePluginDir(t, pluginsDir, "netty")
-	manifest := `{"name":"netty","version":"1.0.0","entry":"main.ttt.lua","permissions":{"network.http":["api.example.com"]}}`
-	if err := os.WriteFile(filepath.Join(dir, "plugin.ttt.json"), []byte(manifest), 0644); err != nil {
-		t.Fatal(err)
-	}
-	pending := m.LoadAll()
-	if len(pending) != 1 {
-		t.Fatalf("pending = %d, want 1", len(pending))
-	}
-	if err := m.ApproveAndLoad(pending[0]); err != nil {
-		t.Fatal(err)
-	}
-	if len(stub.checks) != 1 {
-		t.Fatalf("ForPlugin calls = %d, want 1", len(stub.checks))
-	}
-	if pending[0].Network != &stub.mockNetworkAPI {
-		t.Error("the plugin does not use the copy ForPlugin returned")
-	}
-	if err := stub.checks[0]("api.example.com"); err != nil {
-		t.Errorf("listed host refused: %v", err)
-	}
-	if err := stub.checks[0]("other.example.com"); err == nil {
-		t.Error("unlisted host allowed")
-	}
-}
-
 // Denying a request for more permissions must not record them as approved:
 // enabling the plugin afterwards would load it with them.
 func TestDenyKeepsThePreviouslyApprovedPermissions(t *testing.T) {
@@ -521,5 +481,154 @@ func TestUpdateAwaitingApprovalSurvivesARestart(t *testing.T) {
 	t.Cleanup(again.Shutdown)
 	if pending := again.LoadAll(); len(pending) != 1 {
 		t.Errorf("after a restart pending = %d, want the update asked about again", len(pending))
+	}
+}
+
+type hostCheckedNetworkStub struct {
+	mockNetworkAPI
+	checks []func(*url.URL) error
+}
+
+func (s *hostCheckedNetworkStub) ForPlugin(allow func(*url.URL) error) NetworkAPI {
+	s.checks = append(s.checks, allow)
+	return &s.mockNetworkAPI
+}
+
+// A plugin's init code runs before the app wires it, so the manager must
+// already give it a network API that knows its hosts.
+func TestManagerGivesEachPluginANetworkCheckedAgainstItsHosts(t *testing.T) {
+	m, pluginsDir := newTestManager(t)
+	stub := &hostCheckedNetworkStub{}
+	m.SetNetworkAPI(stub)
+	dir := writePluginDir(t, pluginsDir, "netty")
+	manifest := `{"name":"netty","version":"1.0.0","entry":"main.ttt.lua","permissions":{"network.http":["api.example.com"]}}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.ttt.json"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pending := m.LoadAll()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %d, want 1", len(pending))
+	}
+	if err := m.ApproveAndLoad(pending[0]); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.checks) != 1 {
+		t.Fatalf("ForPlugin calls = %d, want 1", len(stub.checks))
+	}
+	if pending[0].Network != &stub.mockNetworkAPI {
+		t.Error("the plugin does not use the copy ForPlugin returned")
+	}
+	if err := stub.checks[0](&url.URL{Scheme: "https", Host: "api.example.com"}); err != nil {
+		t.Errorf("listed host refused: %v", err)
+	}
+	if err := stub.checks[0](&url.URL{Scheme: "https", Host: "other.example.com"}); err == nil {
+		t.Error("unlisted host allowed")
+	}
+}
+
+// network.http used to stop short of local services, so a grant made before
+// that changed, true or a list whose hostnames can resolve to a local address,
+// has to be asked for again.
+func TestManagerAsksAgainForANetworkGrantFromBeforeLocalAccess(t *testing.T) {
+	pluginsDir := t.TempDir()
+	regPath := filepath.Join(t.TempDir(), "registry.json")
+	perms := map[string]string{
+		"old":            `{"network.http": true}`,
+		"old-listed":     `{"network.http": ["api.example.com"]}`,
+		"current":        `{"network.http": true}`,
+		"current-listed": `{"network.http": ["api.example.com"]}`,
+	}
+	for name, p := range perms {
+		dir := writePluginDir(t, pluginsDir, name)
+		manifest := `{"name":"` + name + `","version":"1.0.0","entry":"main.ttt.lua","permissions":` + p + `}`
+		if err := os.WriteFile(filepath.Join(dir, "plugin.ttt.json"), []byte(manifest), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry := `[
+		{"name": "old", "version": "1.0.0", "enabled": true, "permissions": {"network.http": true}},
+		{"name": "old-listed", "version": "1.0.0", "enabled": true, "permissions": {"network.http": ["api.example.com"]}},
+		{"name": "current", "version": "1.0.0", "enabled": true, "permissions": {"network.http": true}, "grantsVersion": 2},
+		{"name": "current-listed", "version": "1.0.0", "enabled": true, "permissions": {"network.http": ["api.example.com"]}, "grantsVersion": 2}
+	]`
+	if err := os.WriteFile(regPath, []byte(registry), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(pluginsDir, regPath)
+	t.Cleanup(m.Shutdown)
+
+	pending := m.LoadAll()
+	names := []string{}
+	for _, p := range pending {
+		names = append(names, p.Name)
+	}
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"old", "old-listed"}) {
+		t.Fatalf("pending = %v, want [old old-listed]", names)
+	}
+	for _, p := range pending {
+		if err := m.ApproveAndLoad(p); err != nil {
+			t.Fatal(err)
+		}
+		if m.registry.Find(p.Name).GrantsVersion != grantsVersion {
+			t.Errorf("%s: the new approval does not record the current grants version", p.Name)
+		}
+	}
+	if pending := NewManager(pluginsDir, regPath).LoadAll(); len(pending) != 0 {
+		t.Errorf("approved again but still pending after a restart: %d", len(pending))
+	}
+}
+
+func TestAnAnyDestinationGrantApprovedNowIsNotAskedForAgain(t *testing.T) {
+	pluginsDir := t.TempDir()
+	regPath := filepath.Join(t.TempDir(), "registry.json")
+	dir := writePluginDir(t, pluginsDir, "fresh")
+	manifest := `{"name":"fresh","version":"1.0.0","entry":"main.ttt.lua","permissions":{"network.http":true}}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.ttt.json"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(pluginsDir, regPath)
+	pending := m.LoadAll()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %d, want 1", len(pending))
+	}
+	if err := m.ApproveAndLoad(pending[0]); err != nil {
+		t.Fatal(err)
+	}
+	m.Shutdown()
+
+	again := NewManager(pluginsDir, regPath)
+	t.Cleanup(again.Shutdown)
+	if pending := again.LoadAll(); len(pending) != 0 {
+		t.Errorf("approved under the current rules but pending again after a restart: %d", len(pending))
+	}
+}
+
+func TestDenyingAnOldAnyDestinationGrantDoesNotGrantIt(t *testing.T) {
+	pluginsDir := t.TempDir()
+	regPath := filepath.Join(t.TempDir(), "registry.json")
+	dir := writePluginDir(t, pluginsDir, "old")
+	manifest := `{"name":"old","version":"1.0.0","entry":"main.ttt.lua","permissions":{"network.http":true}}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.ttt.json"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regPath, []byte(`[{"name": "old", "version": "1.0.0", "enabled": true, "permissions": {"network.http": true}}]`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(pluginsDir, regPath)
+	t.Cleanup(m.Shutdown)
+	pending := m.LoadAll()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %d, want 1", len(pending))
+	}
+	if err := m.DenyPlugin(pending[0]); err != nil {
+		t.Fatal(err)
+	}
+	p, err := m.SetEnabled("old", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Granted.NetworkHTTP.Enabled() {
+		t.Errorf("enabled after a deny with network.http %+v", p.Granted.NetworkHTTP)
 	}
 }
