@@ -13,12 +13,14 @@ import (
 )
 
 type tabLabelLayout struct {
-	text      string
-	dirty     bool
-	pinned    bool
-	iconStart int
-	iconWidth int
-	iconStyle term.Style
+	text       string
+	dirty      bool
+	dirtyStart int
+	dirtyWidth int
+	pinned     bool
+	iconStart  int
+	iconWidth  int
+	iconStyle  term.Style
 }
 
 type tabSpan struct {
@@ -97,8 +99,13 @@ func (t *TabBarWidget) tabLabelParts(tab Tab) tabLabelLayout {
 	name := filepath.Base(tab.Name)
 	prefix := " "
 	suffix := ""
+	dirtyStart := 0
+	dirtyWidth := 0
 	if tab.Dirty {
-		prefix += string(icons.Rune(icons.Dirty)) + " "
+		dirtyGlyph := string(icons.Rune(icons.Dirty))
+		dirtyStart = textwidth.String(prefix)
+		dirtyWidth = textwidth.String(dirtyGlyph)
+		prefix += dirtyGlyph + " "
 	}
 	if tab.ReadOnly {
 		if icons.IsNerd(t.Icons) {
@@ -108,9 +115,11 @@ func (t *TabBarWidget) tabLabelParts(tab Tab) tabLabelLayout {
 		}
 	}
 	label := tabLabelLayout{
-		text:   prefix,
-		dirty:  tab.Dirty,
-		pinned: tab.Pinned,
+		text:       prefix,
+		dirty:      tab.Dirty,
+		dirtyStart: dirtyStart,
+		dirtyWidth: dirtyWidth,
+		pinned:     tab.Pinned,
 	}
 	glyph, iconStyle := FileIconForPath(t.Icons, tab.FilePath)
 	label.iconStart = textwidth.String(label.text)
@@ -140,10 +149,9 @@ func drawTabLabel(surface Surface, x, innerLeft, innerRight int, label tabLabelL
 	for _, ch := range label.text {
 		chStyle := style
 		bgStyle := term.StyleDefault
-		if label.dirty && ch == icons.Rune(icons.Dirty) {
+		if label.dirty && label.dirtyWidth > 0 && labelX >= label.dirtyStart && labelX < label.dirtyStart+label.dirtyWidth {
 			chStyle = term.StyleWarning
-		}
-		if label.pinned && string(ch) == pinnedGlyph {
+		} else if label.pinned && string(ch) == pinnedGlyph {
 			chStyle = term.StyleMuted
 		}
 		w := textwidth.Rune(ch)

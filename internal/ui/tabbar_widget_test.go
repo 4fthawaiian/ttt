@@ -8,6 +8,7 @@ import (
 
 	"github.com/eugenioenko/ttt/internal/config"
 	"github.com/eugenioenko/ttt/internal/fileicons"
+	"github.com/eugenioenko/ttt/internal/icons"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/eugenioenko/ttt/internal/widgets"
 	"github.com/gdamore/tcell/v3"
@@ -685,5 +686,129 @@ func TestTabBarDragDoesNotStartFromPressOutsideTabs(t *testing.T) {
 
 	if !tb.drag.Active() {
 		t.Fatal("legitimate click after foreign press did not start drag")
+	}
+}
+
+func TestTabBarDirtyMarkerOverrideStylesOnlyInsertedMarker(t *testing.T) {
+	t.Cleanup(func() { icons.Configure("", nil) })
+	if warnings := icons.Configure(config.IconsNone, map[string]string{"dirty": "a"}); len(warnings) != 0 {
+		t.Fatalf("unexpected configure warnings: %v", warnings)
+	}
+
+	tb := NewTabBarWidget()
+	tb.SetTabs([]Tab{
+		{Name: "data.txt", Dirty: true, Active: true},
+		{Name: "alpha.go", Dirty: true},
+		{Name: "clean-a.txt", Dirty: false},
+	})
+	tb.SetRect(Rect{X: 0, Y: 0, W: 60, H: 3})
+
+	grid := makeGrid(60, 3)
+	tb.Render(NewRenderSurface(grid, Rect{X: 0, Y: 0, W: 60, H: 3}))
+
+	// Tab 0 (active, dirty): border at 0, space at 1, dirty marker 'a' at 2, space at 3, "data.txt" starting at 4.
+	activeSpan := tb.tabSpans[0]
+	dirtyCol0 := activeSpan.start + 1 + activeSpan.label.dirtyStart
+	if grid[1][dirtyCol0].Ch != 'a' || grid[1][dirtyCol0].Style != term.StyleWarning {
+		t.Fatalf("active dirty marker cell = (%q, %v), want ('a', StyleWarning)", grid[1][dirtyCol0].Ch, grid[1][dirtyCol0].Style)
+	}
+	for x := activeSpan.start + 1; x < activeSpan.end-1; x++ {
+		if x == dirtyCol0 {
+			continue
+		}
+		if grid[1][x].Style != term.StyleActiveTab {
+			t.Fatalf("active tab col %d (%q) style = %v, want StyleActiveTab", x, grid[1][x].Ch, grid[1][x].Style)
+		}
+	}
+
+	// Tab 1 (inactive, dirty): space at start, dirty marker 'a' at start+1, then "alpha.go".
+	inactiveDirtySpan := tb.tabSpans[1]
+	dirtyCol1 := inactiveDirtySpan.start + inactiveDirtySpan.label.dirtyStart
+	if grid[1][dirtyCol1].Ch != 'a' || grid[1][dirtyCol1].Style != term.StyleWarning {
+		t.Fatalf("inactive dirty marker cell = (%q, %v), want ('a', StyleWarning)", grid[1][dirtyCol1].Ch, grid[1][dirtyCol1].Style)
+	}
+	for x := inactiveDirtySpan.start; x < inactiveDirtySpan.end; x++ {
+		if x == dirtyCol1 {
+			continue
+		}
+		if grid[1][x].Style != term.StyleInactiveTab {
+			t.Fatalf("inactive dirty tab col %d (%q) style = %v, want StyleInactiveTab", x, grid[1][x].Ch, grid[1][x].Style)
+		}
+	}
+
+	// Tab 2 (clean): no warning style anywhere even though name contains 'a'.
+	cleanSpan := tb.tabSpans[2]
+	for x := cleanSpan.start; x < cleanSpan.end; x++ {
+		if grid[1][x].Style == term.StyleWarning {
+			t.Fatalf("clean tab col %d (%q) unexpectedly received StyleWarning", x, grid[1][x].Ch)
+		}
+	}
+}
+
+func TestTabBarDefaultDirtyMarkerRendersWarningStyle(t *testing.T) {
+	icons.Configure("", nil)
+
+	tb := NewTabBarWidget()
+	tb.SetTabs([]Tab{
+		{Name: "data.txt", Dirty: true, Active: true},
+	})
+	tb.SetRect(Rect{X: 0, Y: 0, W: 30, H: 3})
+
+	grid := makeGrid(30, 3)
+	tb.Render(NewRenderSurface(grid, Rect{X: 0, Y: 0, W: 30, H: 3}))
+
+	span := tb.tabSpans[0]
+	dirtyCol := span.start + 1 + span.label.dirtyStart
+	wantRune := icons.Rune(icons.Dirty)
+	if grid[1][dirtyCol].Ch != wantRune || grid[1][dirtyCol].Style != term.StyleWarning {
+		t.Fatalf("default dirty marker cell = (%q, %v), want (%q, StyleWarning)", grid[1][dirtyCol].Ch, grid[1][dirtyCol].Style, wantRune)
+	}
+}
+
+func TestTabBarDirtyMarkerPreservesFileIconAndPinnedStyling(t *testing.T) {
+	t.Cleanup(func() { icons.Configure("", nil) })
+	if warnings := icons.Configure(config.IconsNerdFont, map[string]string{"dirty": "a"}); len(warnings) != 0 {
+		t.Fatalf("unexpected configure warnings: %v", warnings)
+	}
+
+	tb := NewTabBarWidget()
+	tb.Icons = config.IconsNerdFont
+	tb.SetTabs([]Tab{
+		{
+			Name:     "data.go",
+			FilePath: "/repo/data.go",
+			Dirty:    true,
+			Pinned:   true,
+			Active:   true,
+			Closable: true,
+		},
+	})
+	tb.SetRect(Rect{X: 0, Y: 0, W: 40, H: 3})
+
+	grid := makeGrid(40, 3)
+	tb.Render(NewRenderSurface(grid, Rect{X: 0, Y: 0, W: 40, H: 3}))
+
+	span := tb.tabSpans[0]
+	labelStart := span.start + 1
+	dirtyCol := labelStart + span.label.dirtyStart
+	iconCol := labelStart + span.label.iconStart
+	pinnedCol := span.end - 3
+
+	if grid[1][dirtyCol].Ch != 'a' || grid[1][dirtyCol].Style != term.StyleWarning {
+		t.Fatalf("dirty marker cell = (%q, %v), want ('a', StyleWarning)", grid[1][dirtyCol].Ch, grid[1][dirtyCol].Style)
+	}
+	if grid[1][iconCol].Style != span.label.iconStyle || grid[1][iconCol].BgStyle != term.StyleActiveTab {
+		t.Fatalf("file icon cell style/bg = (%v, %v), want (%v, StyleActiveTab)", grid[1][iconCol].Style, grid[1][iconCol].BgStyle, span.label.iconStyle)
+	}
+	if grid[1][pinnedCol].Style != term.StyleMuted {
+		t.Fatalf("pinned marker cell style = %v, want StyleMuted", grid[1][pinnedCol].Style)
+	}
+	for x := labelStart; x < span.end-1; x++ {
+		if x == dirtyCol || (x >= iconCol && x < iconCol+span.label.iconWidth) || x == pinnedCol {
+			continue
+		}
+		if grid[1][x].Style != term.StyleActiveTab {
+			t.Fatalf("tab label col %d (%q) style = %v, want StyleActiveTab", x, grid[1][x].Ch, grid[1][x].Style)
+		}
 	}
 }
