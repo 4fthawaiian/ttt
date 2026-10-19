@@ -7,7 +7,9 @@ import (
 
 	"github.com/eugenioenko/ttt/internal/config"
 	"github.com/eugenioenko/ttt/internal/fileicons"
+	"github.com/eugenioenko/ttt/internal/icons"
 	"github.com/eugenioenko/ttt/internal/term"
+	"github.com/gdamore/tcell/v3"
 )
 
 func TestSearchFileRowsShowIconsAndOmitIconSpacingWhenDisabled(t *testing.T) {
@@ -181,4 +183,118 @@ func TestSearchStartClearsError(t *testing.T) {
 	if s.Error != "" {
 		t.Errorf("Error = %q, want cleared when a new search starts", s.Error)
 	}
+}
+
+func TestSearchFilterToggleAndPerFileReplaceFollowIconModeAndOverrides(t *testing.T) {
+	t.Cleanup(func() { icons.Configure("", nil) })
+
+	for _, mode := range []string{config.IconsNone, config.IconsNerdFont} {
+		t.Run("defaults_"+mode, func(t *testing.T) {
+			icons.Configure(mode, nil)
+
+			s := NewSearchWidget()
+			s.Icons = mode
+			s.showReplace = true
+			s.ReplaceInput.Text = "next"
+			s.Selected = -1
+			s.lastSelected = -1
+			s.Groups = []SearchFileGroup{{
+				FilePath: "/repo/main.go",
+				RelPath:  "main.go",
+				Expanded: true,
+				Matches:  []SearchMatch{{LineNum: 1, LineText: "old"}},
+			}}
+			s.flatten()
+
+			const w, h = 30, 10
+			grid := makeGrid(w, h)
+			s.Render(NewRenderSurface(grid, Rect{W: w, H: h}))
+
+			wantCollapsed := []rune(icons.Get(mode, icons.ChevronDown))[0]
+			if got := grid[s.toggleRow()][w-2].Ch; got != wantCollapsed {
+				t.Fatalf("collapsed filter toggle glyph = %q, want %q", got, wantCollapsed)
+			}
+			if grid[s.toggleRow()][w-3].Ch != ' ' || grid[s.toggleRow()][w-1].Ch != ' ' {
+				t.Fatalf("collapsed filter toggle padding = (%q, %q), want spaces", grid[s.toggleRow()][w-3].Ch, grid[s.toggleRow()][w-1].Ch)
+			}
+
+			wantReplace := []rune(icons.Get(mode, icons.Replace))[0]
+			if got := grid[s.resultStartY][w-2].Ch; got != wantReplace {
+				t.Fatalf("per-file replace glyph = %q, want %q", got, wantReplace)
+			}
+
+			s.showFilters = true
+			grid = makeGrid(w, h)
+			s.Render(NewRenderSurface(grid, Rect{W: w, H: h}))
+
+			wantExpanded := []rune(icons.Get(mode, icons.ArrowLeft))[0]
+			if got := grid[s.toggleRow()][w-2].Ch; got != wantExpanded {
+				t.Fatalf("expanded filter toggle glyph = %q, want %q", got, wantExpanded)
+			}
+		})
+	}
+
+	t.Run("overrides", func(t *testing.T) {
+		warnings := icons.Configure(config.IconsNone, map[string]string{
+			"chevron-down": "v",
+			"arrow-left":   "<",
+			"replace":      "R",
+		})
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected configure warnings: %v", warnings)
+		}
+
+		s := NewSearchWidget()
+		s.showReplace = true
+		s.ReplaceInput.Text = "next"
+		s.Selected = -1
+		s.lastSelected = -1
+		s.Groups = []SearchFileGroup{{
+			FilePath: "/repo/main.go",
+			RelPath:  "main.go",
+			Expanded: true,
+			Matches:  []SearchMatch{{LineNum: 1, LineText: "old"}},
+		}}
+		s.flatten()
+
+		const w, h = 30, 12
+		s.SetRect(Rect{X: 5, Y: 2, W: w, H: h})
+		grid := makeGrid(w, h)
+		s.Render(NewRenderSurface(grid, Rect{W: w, H: h}))
+
+		if got := grid[s.toggleRow()][w-2].Ch; got != 'v' {
+			t.Fatalf("overridden collapsed filter toggle = %q, want 'v'", got)
+		}
+		if got := grid[s.resultStartY][w-2].Ch; got != 'R' {
+			t.Fatalf("overridden per-file replace glyph = %q, want 'R'", got)
+		}
+
+		// Clicking border outside filter toggle hit region must not toggle filters.
+		s.HandleEvent(tcell.NewEventMouse(5+w-4, 2+s.toggleRow(), tcell.Button1, tcell.ModNone))
+		if s.showFilters {
+			t.Fatal("click outside filter toggle hit region unexpectedly toggled showFilters")
+		}
+
+		// Clicking inside the rendered filter toggle hit region toggles filters on.
+		s.HandleEvent(tcell.NewEventMouse(5+w-2, 2+s.toggleRow(), tcell.Button1, tcell.ModNone))
+		if !s.showFilters {
+			t.Fatal("click on filter toggle hit region did not enable showFilters")
+		}
+
+		grid = makeGrid(w, h)
+		s.Render(NewRenderSurface(grid, Rect{W: w, H: h}))
+		if got := grid[s.toggleRow()][w-2].Ch; got != '<' {
+			t.Fatalf("overridden expanded filter toggle = %q, want '<'", got)
+		}
+
+		// Clicking the per-file replace control triggers OnReplace for the file group.
+		replacedFile := ""
+		s.OnReplace = func(filePath string, _ []SearchMatch, replacement string, _ SearchOptions) {
+			replacedFile = filePath + ":" + replacement
+		}
+		s.HandleEvent(tcell.NewEventMouse(5+w-2, 2+s.resultStartY, tcell.Button1, tcell.ModNone))
+		if replacedFile != "/repo/main.go:next" {
+			t.Fatalf("per-file replace callback = %q, want %q", replacedFile, "/repo/main.go:next")
+		}
+	})
 }

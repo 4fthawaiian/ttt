@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/eugenioenko/ttt/internal/icons"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/eugenioenko/ttt/internal/icons"
 	"github.com/eugenioenko/ttt/internal/term"
+	"github.com/eugenioenko/ttt/internal/textwidth"
 
 	"github.com/gdamore/tcell/v3"
 )
@@ -82,6 +83,12 @@ type SearchWidget struct {
 	searchGen        uint64
 	searchCancel     context.CancelFunc
 	resultStartY     int
+	renderWidth      int
+	filterToggleHit  HitRegion
+	replaceActionX   int
+	replaceActionW   int
+	previewActionX   int
+	previewActionW   int
 }
 
 type searchItem struct {
@@ -523,6 +530,12 @@ func (s *SearchWidget) flatten() {
 
 func (s *SearchWidget) Render(surface Surface) {
 	w, h := surface.Size()
+	s.renderWidth = w
+	s.filterToggleHit = HitRegion{}
+	s.replaceActionX = 0
+	s.replaceActionW = 0
+	s.previewActionX = 0
+	s.previewActionW = 0
 	surface.Fill(term.Cell{Ch: ' '})
 
 	if h < 2 {
@@ -541,17 +554,18 @@ func (s *SearchWidget) Render(surface Surface) {
 		y++
 	}
 
-	filterToggle := " ▼ "
+	filterIcon := icons.ChevronDown
 	if s.showFilters {
-		filterToggle = " ◀ "
+		filterIcon = icons.ArrowLeft
 	}
-	ftx := w - len([]rune(filterToggle))
+	filterToggle := " " + string(icons.Rune(filterIcon)) + " "
+	filterToggleW := textwidth.String(filterToggle)
+	ftx := max(w-filterToggleW, 0)
 	for x := 0; x < ftx; x++ {
 		surface.SetCell(x, y, term.Cell{Ch: '─', Style: term.StyleBorder})
 	}
-	for i, ch := range filterToggle {
-		surface.SetCell(ftx+i, y, term.Cell{Ch: ch, Style: term.StyleMuted})
-	}
+	surface.DrawText(ftx, y, filterToggle, w, term.StyleMuted)
+	s.filterToggleHit = HitRegion{X: ftx, Y: y, W: w - ftx}
 	y++
 
 	if s.showFilters {
@@ -675,9 +689,11 @@ func (s *SearchWidget) Render(surface Surface) {
 				}
 			}
 			x := surface.DrawText(0, y, string(chevron), w, style) + 1
+			replaceGlyph := string(icons.Rune(icons.Replace))
+			replaceW := textwidth.String(replaceGlyph)
 			right := w - 1
 			if s.showReplace && s.ReplaceInput.Text != "" {
-				right = min(right, w-5)
+				right = min(right, w-4-replaceW)
 			}
 			iconPath := g.IconPath
 			if iconPath == "" {
@@ -700,13 +716,17 @@ func (s *SearchWidget) Render(surface Surface) {
 			}
 
 			if s.showReplace && s.ReplaceInput.Text != "" {
-				bx := w - 2
+				bx := w - 1 - replaceW
 				if bx >= 0 && bx < w-1 {
-					surface.SetCell(bx, y, term.Cell{Ch: '⟳', Style: mutedStyle})
+					surface.DrawText(bx, y, replaceGlyph, w-1, mutedStyle)
+					s.replaceActionX = max(bx-1, 0)
+					s.replaceActionW = (bx + replaceW) - s.replaceActionX
 				}
-				px := w - 4
+				px := bx - 2
 				if px >= 0 && px < w-1 {
 					surface.SetCell(px, y, term.Cell{Ch: '⊙', Style: mutedStyle})
+					s.previewActionX = max(px-1, 0)
+					s.previewActionW = (px + 1) - s.previewActionX
 				}
 			}
 		} else {
@@ -789,16 +809,22 @@ func (s *SearchWidget) HandleEvent(ev tcell.Event) EventResult {
 				return EventConsumed
 			}
 
-			tRow := s.toggleRow()
-			if localY == tRow {
-				if localX >= r.W-3 {
-					s.showFilters = !s.showFilters
-					inputs := s.visibleInputs()
-					if s.focusIdx >= len(inputs) {
-						s.focusIdx = 0
-					}
-					return EventConsumed
+			renderW := s.renderWidth
+			if renderW == 0 {
+				renderW = r.W
+			}
+			filterHit := s.filterToggleHit
+			if filterHit.W == 0 && renderW > 0 {
+				ftW := min(3, renderW)
+				filterHit = HitRegion{X: renderW - ftW, Y: s.toggleRow(), W: ftW}
+			}
+			if filterHit.Contains(localX, localY) {
+				s.showFilters = !s.showFilters
+				inputs := s.visibleInputs()
+				if s.focusIdx >= len(inputs) {
+					s.focusIdx = 0
 				}
+				return EventConsumed
 			}
 
 			if s.showFilters {
@@ -816,11 +842,19 @@ func (s *SearchWidget) HandleEvent(ev tcell.Event) EventResult {
 			if idx >= 0 && idx < len(s.FlatList) {
 				item := s.FlatList[idx]
 				if s.showReplace && s.ReplaceInput.Text != "" && item.IsFile {
-					if localX >= r.W-3 && localX <= r.W-2 {
+					repX, repW := s.replaceActionX, s.replaceActionW
+					if repW == 0 && renderW >= 3 {
+						repX, repW = renderW-3, 2
+					}
+					prevX, prevW := s.previewActionX, s.previewActionW
+					if prevW == 0 && renderW >= 5 {
+						prevX, prevW = renderW-5, 2
+					}
+					if repW > 0 && localX >= repX && localX < repX+repW {
 						s.replaceInFile(item.Group)
 						return EventConsumed
 					}
-					if localX >= r.W-5 && localX <= r.W-4 {
+					if prevW > 0 && localX >= prevX && localX < prevX+prevW {
 						s.previewFile(item.Group)
 						return EventConsumed
 					}
