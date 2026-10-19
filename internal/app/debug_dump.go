@@ -34,6 +34,7 @@ type DebugState struct {
 // tail, so a terminal-emulation bug can be diagnosed from ground truth.
 type DebugTerminal struct {
 	ID      string `json:"id"`
+	Label   string `json:"label,omitempty"`
 	Cols    int    `json:"cols"`
 	Rows    int    `json:"rows"`
 	RawTail string `json:"raw_tail"`
@@ -234,6 +235,7 @@ func (a *App) BuildDebugState() *DebugState {
 		cols, rows := tt.Term.Size()
 		state.Terminals = append(state.Terminals, DebugTerminal{
 			ID:      tt.ID,
+			Label:   tt.Label,
 			Cols:    cols,
 			Rows:    rows,
 			RawTail: strconv.Quote(string(tt.Term.RawTail())),

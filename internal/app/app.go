@@ -35,34 +35,51 @@ const hoverGraceMargin = 3
 
 type TerminalTab struct {
 	ID     string
+	Label  string
 	Term   *terminal.Terminal
 	Widget *ui.TerminalWidget
 }
 
+// TerminalSpec describes the program one terminal tab runs. The zero value
+// inherits the global terminal settings and the workspace directory.
+type TerminalSpec struct {
+	Shell string
+	Args  []string
+	// Env are extra KEY=VALUE entries for the child (the process environment is
+	// inherited; these are appended).
+	Env []string
+	Cwd string
+	// Label is a short badge for the strip ("pi", "lg") and the tab record.
+	Label string
+}
+
 type App struct {
-	Root                   *ui.Root
-	EditorGroup            *ui.EditorGroupWidget
-	Sidebar                *ui.SidebarWidget
-	SplitPanel             *ui.SplitPanelWidget
-	ContentSplit           *ui.ContentSplitWidget
-	BottomPanel            *ui.BottomPanelWidget
-	Search                 *ui.SearchWidget
-	MenuBar                *ui.MenuBarWidget
-	RootBox                *widgets.VStackWidget
-	StatusBar              *ui.StatusBarWidget
-	Status                 *view.StatusBar
-	Borders                *term.BorderSet
-	Screen                 *term.TcellScreen
-	Renderer               *render.Renderer
-	ImageLayer             *image.Layer
-	imageCellW             int
-	imageCellH             int
-	Settings               *config.Settings
-	State                  config.State
-	Workspace              *workspace.Workspace
-	Palette                *ui.TerminalColorPalette
-	TerminalPanel          *ui.TerminalPanelWidget
-	Terminals              []TerminalTab
+	Root          *ui.Root
+	EditorGroup   *ui.EditorGroupWidget
+	Sidebar       *ui.SidebarWidget
+	SplitPanel    *ui.SplitPanelWidget
+	ContentSplit  *ui.ContentSplitWidget
+	BottomPanel   *ui.BottomPanelWidget
+	Search        *ui.SearchWidget
+	MenuBar       *ui.MenuBarWidget
+	RootBox       *widgets.VStackWidget
+	StatusBar     *ui.StatusBarWidget
+	Status        *view.StatusBar
+	Borders       *term.BorderSet
+	Screen        *term.TcellScreen
+	Renderer      *render.Renderer
+	ImageLayer    *image.Layer
+	imageCellW    int
+	imageCellH    int
+	Settings      *config.Settings
+	State         config.State
+	Workspace     *workspace.Workspace
+	Palette       *ui.TerminalColorPalette
+	TerminalPanel *ui.TerminalPanelWidget
+	Terminals     []TerminalTab
+	// TerminalSeq is monotonic so a closed-and-reopened tab never reuses an id
+	// (plugin handles key off it).
+	TerminalSeq            int
 	LspManager             *lsp.Manager
 	DocVersionsMu          sync.Mutex
 	DocVersions            map[string]int
@@ -394,7 +411,15 @@ func (a *App) ToggleBottomPanel() {
 	}
 }
 
+// SpawnTerminal opens a terminal tab running the configured shell.
 func (a *App) SpawnTerminal() {
+	a.SpawnTerminalSpec(TerminalSpec{})
+}
+
+// SpawnTerminalSpec opens a terminal tab for a specific program. A caller that
+// names a Shell supplies its own Args (empty = run the program bare); an empty
+// Shell inherits both from the global terminal settings.
+func (a *App) SpawnTerminalSpec(spec TerminalSpec) (string, error) {
 	r := a.ContentSplit.GetRect()
 	var cols, rows int
 	if a.ContentSplit.Position == ui.SplitRight {
@@ -419,15 +444,22 @@ func (a *App) SpawnTerminal() {
 		rows = 24
 	}
 
-	t, err := terminal.New(a.Settings.Terminal.Shell, cols, rows, a.Settings.Terminal.Scrollback, nil, a.Workspace.Primary())
+	if spec.Shell == "" {
+		spec.Shell = a.Settings.Terminal.Shell
+		spec.Args = a.Settings.Terminal.Args
+	}
+	if spec.Cwd == "" {
+		spec.Cwd = a.Workspace.Primary()
+	}
+	t, err := terminal.New(spec.Shell, cols, rows, a.Settings.Terminal.Scrollback, spec.Env, spec.Cwd, spec.Args...)
 	if err != nil {
 		slog.Error("terminal.New", "err", err)
 		a.StatusError("Failed to open terminal: " + err.Error())
-		return
+		return "", err
 	}
 
 	tw := ui.NewTerminalWidget(t, a.Palette)
-	tw.WorkDir = a.Workspace.Primary()
+	tw.WorkDir = spec.Cwd
 	tw.OnOpenURL = func(url string) {
 		OpenURL(url)
 	}
@@ -439,9 +471,10 @@ func (a *App) SpawnTerminal() {
 		a.FocusEditor()
 	}
 
-	panelID := fmt.Sprintf("terminal-%d", len(a.Terminals))
-	a.Terminals = append(a.Terminals, TerminalTab{ID: panelID, Term: t, Widget: tw})
-	a.TerminalPanel.AddTerminal(tw)
+	panelID := fmt.Sprintf("terminal-%d", a.TerminalSeq)
+	a.TerminalSeq++
+	a.Terminals = append(a.Terminals, TerminalTab{ID: panelID, Label: spec.Label, Term: t, Widget: tw})
+	a.TerminalPanel.AddTerminalLabeled(tw, spec.Label)
 	a.BottomPanel.SetActivePanel("terminal")
 
 	if !a.ContentSplit.ShowBottom {
@@ -456,6 +489,77 @@ func (a *App) SpawnTerminal() {
 		a.Screen.PostEvent(tcell.NewEventInterrupt(panelID))
 	}
 	t.Run()
+	return panelID, nil
+}
+
+// ---- terminal handles for plugins (the ttt.terminal Lua module) ----
+
+// SendToTerminal writes text into a tab's PTY. Actions run on the main thread,
+// so no extra synchronisation is needed.
+func (a *App) SendToTerminal(id, text string) error {
+	for _, tt := range a.Terminals {
+		if tt.ID == id {
+			tt.Term.WriteString(text)
+			return nil
+		}
+	}
+	return fmt.Errorf("no terminal %q", id)
+}
+
+// TerminalTail returns the last maxBytes of a tab's raw PTY output.
+func (a *App) TerminalTail(id string, maxBytes int) (string, error) {
+	for _, tt := range a.Terminals {
+		if tt.ID == id {
+			raw := tt.Term.RawTail()
+			if maxBytes > 0 && len(raw) > maxBytes {
+				raw = raw[len(raw)-maxBytes:]
+			}
+			return string(raw), nil
+		}
+	}
+	return "", fmt.Errorf("no terminal %q", id)
+}
+
+// FocusTerminal reveals the terminal panel and selects the tab.
+func (a *App) FocusTerminal(id string) error {
+	idx := -1
+	for i, tt := range a.Terminals {
+		if tt.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("no terminal %q", id)
+	}
+	if !a.ContentSplit.ShowBottom {
+		a.ContentSplit.ShowBottom = true
+	}
+	a.TerminalPanel.SetActive(idx)
+	a.BottomPanel.SetActivePanel("terminal")
+	a.Root.SetFocus(a.TerminalPanel)
+	a.Screen.PostEvent(tcell.NewEventInterrupt(nil))
+	return nil
+}
+
+// TerminalScreen returns the visible screen of one tab as plain text.
+func (a *App) TerminalScreen(id string) (string, error) {
+	for _, tt := range a.Terminals {
+		if tt.ID == id {
+			return tt.Term.ScreenText(), nil
+		}
+	}
+	return "", fmt.Errorf("terminal %q not found", id)
+}
+
+// ListTerminals reports the open tabs to a plugin.
+func (a *App) ListTerminals() []plugin.TerminalInfo {
+	out := make([]plugin.TerminalInfo, 0, len(a.Terminals))
+	for _, tt := range a.Terminals {
+		cols, rows := tt.Term.Size()
+		out = append(out, plugin.TerminalInfo{ID: tt.ID, Label: tt.Label, Cols: cols, Rows: rows})
+	}
+	return out
 }
 
 func (a *App) CloseTerminal(panelID string) {

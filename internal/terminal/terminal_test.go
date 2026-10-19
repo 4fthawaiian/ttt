@@ -304,6 +304,32 @@ func TestPrimaryDeviceAttributesResponse(t *testing.T) {
 // go-pty keeps its own copy of the slave fd open in this process, so the master
 // never reports EOF when the child dies. Detecting exit therefore has to come
 // from waiting on the process, not from the read loop erroring out.
+func TestNewPassesArgsToTheProgram(t *testing.T) {
+	term, err := New("/bin/sh", 40, 5, 1000, nil, "", "-c", "printf argv-ok")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	exited := make(chan struct{})
+	var once sync.Once
+	term.OnExit = func() { once.Do(func() { close(exited) }) }
+	term.Run()
+	defer term.Close()
+
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the program never exited")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(string(term.RawTail()), "argv-ok") {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("args did not reach the program; raw tail: %q", string(term.RawTail()))
+}
+
 func TestOnExitFiresWhenShellExits(t *testing.T) {
 	term := newTestTerminal(t)
 	exited := make(chan struct{})

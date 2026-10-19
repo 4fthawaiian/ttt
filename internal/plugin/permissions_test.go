@@ -407,3 +407,46 @@ func TestFsAccessResolve(t *testing.T) {
 		t.Error("* must grant every path")
 	}
 }
+
+func TestTerminalPermissions(t *testing.T) {
+	if err := (PermissionSet{TerminalControl: true}).Check("terminal.control"); err != nil {
+		t.Fatalf("terminal.control granted but Check failed: %v", err)
+	}
+	if err := (PermissionSet{}).Check("terminal.read"); err == nil {
+		t.Fatal("terminal.read must be denied without the grant")
+	}
+
+	diff := DiffPermissions(PermissionSet{}, PermissionSet{TerminalControl: true, TerminalRead: true})
+	if len(diff.Entries) != 2 {
+		t.Fatalf("expected two requested permissions, got %+v", diff.Entries)
+	}
+	granted := DiffPermissions(
+		PermissionSet{TerminalControl: true, TerminalRead: true},
+		PermissionSet{TerminalControl: true, TerminalRead: true},
+	)
+	if !granted.IsEmpty() {
+		t.Fatalf("granted permissions must not show as required: %+v", granted.Entries)
+	}
+
+	// The registry keeps only permissions the manifest still declares and the
+	// user approved; terminal grants must survive that intersection (missed in
+	// the v1.8 rebase, which silently stripped them on every startup).
+	kept := IntersectPermissions(
+		PermissionSet{TerminalControl: true, TerminalRead: true, Commands: true},
+		PermissionSet{TerminalControl: true, TerminalRead: true, Commands: true},
+	)
+	if !kept.TerminalControl || !kept.TerminalRead || !kept.Commands {
+		t.Fatalf("terminal grants were dropped: %+v", kept)
+	}
+	dropped := IntersectPermissions(
+		PermissionSet{TerminalControl: true, TerminalRead: true},
+		PermissionSet{TerminalControl: true},
+	)
+	if dropped.TerminalRead {
+		t.Fatal("a permission no longer declared must not stay granted")
+	}
+	labels := PermissionSet{TerminalControl: true, TerminalRead: true}.DisplayEntries()
+	if len(labels) != 2 {
+		t.Fatalf("display entries = %+v, want two terminal rows", labels)
+	}
+}

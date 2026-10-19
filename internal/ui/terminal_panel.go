@@ -10,6 +10,7 @@ type TerminalPanelWidget struct {
 	BaseWidget
 	TabBar  *VerticalTabBar
 	widgets []Widget
+	labels  []string
 	active  int
 	Borders *term.BorderSet
 }
@@ -56,8 +57,14 @@ func (tp *TerminalPanelWidget) SetFocused(focused bool) {
 // does. Leaving that to a following Root.SetFocus only worked while SetFocus
 // blindly re-asserted focus on the already-focused panel.
 func (tp *TerminalPanelWidget) AddTerminal(w Widget) {
+	tp.AddTerminalLabeled(w, "")
+}
+
+// AddTerminalLabeled adds a terminal with an optional short badge in the strip.
+func (tp *TerminalPanelWidget) AddTerminalLabeled(w Widget, label string) {
 	tp.blurActive()
 	tp.widgets = append(tp.widgets, w)
+	tp.labels = append(tp.labels, label)
 	tp.active = len(tp.widgets) - 1
 	tp.focusActive()
 	tp.syncTabBar()
@@ -68,6 +75,9 @@ func (tp *TerminalPanelWidget) RemoveTerminal(index int) {
 		return
 	}
 	tp.widgets = append(tp.widgets[:index], tp.widgets[index+1:]...)
+	if index < len(tp.labels) {
+		tp.labels = append(tp.labels[:index], tp.labels[index+1:]...)
+	}
 	if tp.active >= len(tp.widgets) {
 		tp.active = len(tp.widgets) - 1
 	}
@@ -124,6 +134,7 @@ func (tp *TerminalPanelWidget) DividerScreenX() int {
 func (tp *TerminalPanelWidget) syncTabBar() {
 	tp.TabBar.Count = len(tp.widgets)
 	tp.TabBar.Active = tp.active
+	tp.TabBar.Labels = tp.labels
 }
 
 func (tp *TerminalPanelWidget) Render(surface Surface) {

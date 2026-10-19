@@ -31,8 +31,11 @@ const (
 )
 
 type TerminalSettings struct {
-	Shell      string `json:"shell,omitempty"`
-	Scrollback int    `json:"scrollback,omitempty"`
+	Shell string `json:"shell,omitempty"`
+	// Args are passed to Shell unchanged, so a tab can run a program other than
+	// an interactive shell (e.g. Shell="pi", Args=["--model", "..."]).
+	Args       []string `json:"args,omitempty"`
+	Scrollback int      `json:"scrollback,omitempty"`
 }
 
 func DefaultTerminalSettings() TerminalSettings {

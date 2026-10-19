@@ -18,6 +18,7 @@ func newTestPluginBase(perms PermissionSet) (*Plugin, func()) {
 	setupDecorationsModule(L, p)
 	setupFsModule(L, p)
 	setupSystemModule(L, p)
+	setupTerminalModule(L, p)
 	setupNetModule(L, p)
 	setupEventsModule(L, p)
 	return p, func() { L.Close() }

@@ -575,6 +575,7 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 	}
 	p.Filesystem = fs
 	p.System = NewPluginSystemAPI()
+	p.Terminal = NewPluginTerminalAPI(a)
 	if system, ok := p.System.(*PluginSystemAPI); ok {
 		system.onExec = func() {
 			a.postRepositoryInvalidation("", RepositoryWorktree|RepositoryHistory)

@@ -12,8 +12,12 @@ const VerticalTabBarWidth = 6
 
 type VerticalTabBar struct {
 	BaseWidget
-	Count    int
-	Active   int
+	Count  int
+	Active int
+	// Labels are optional per-tab badges (e.g. "pi", "sh"). The strip is 4
+	// content cells wide, so longer labels are truncated here; the full label
+	// lives on the tab (app.TerminalTab.Label) for tooling and the debug dump.
+	Labels   []string
 	OnSelect func(index int)
 	Borders  *term.BorderSet
 }
@@ -54,7 +58,9 @@ func (v *VerticalTabBar) Render(surface Surface) {
 		}
 		n := i + 1
 		var label string
-		if n < 10 {
+		if i < len(v.Labels) && v.Labels[i] != "" {
+			label = fmt.Sprintf("[%s]", truncateTabLabel(v.Labels[i]))
+		} else if n < 10 {
 			label = fmt.Sprintf("[>%d]", n)
 		} else {
 			label = fmt.Sprintf("[%d]", n)
@@ -65,6 +71,15 @@ func (v *VerticalTabBar) Render(surface Surface) {
 			}
 		}
 	}
+}
+
+// truncateTabLabel fits a label into the strip's 4-cell content area ("[pi]").
+func truncateTabLabel(label string) string {
+	r := []rune(label)
+	if len(r) > 2 {
+		r = r[:2]
+	}
+	return string(r)
 }
 
 func (v *VerticalTabBar) HandleEvent(ev tcell.Event) EventResult {

@@ -620,6 +620,38 @@ Close a plugin editor tab by its ID (string). Requires `panel.editor` permission
 ttt.close_tab("my-tab-id")
 ```
 
+### `ttt.terminal` Module
+
+Host a program (for example an AI coding agent) in a terminal tab and drive it
+from the plugin. Requires `terminal.control` (spawn/send/focus) and/or
+`terminal.read` (read/list); a function whose permission is missing is `nil`, so
+`if term.spawn then … end` is the capability check.
+
+```lua
+local term = require("ttt.terminal")
+
+local id, err = term.spawn{
+  shell = "pi",                    -- program to run ("" = the configured shell)
+  args  = {"--model", "…"},        -- argv, verbatim
+  cwd   = "/path/to/project",      -- working directory ("" = the workspace)
+  label = "pi",                    -- short badge in the tab strip (2 chars shown)
+  env   = {FORSETI_AGENT = "a1"},  -- extra env (map or {"K=V"} array)
+}
+if not id then error(err) end
+
+term.send(id, "Review the staged diff\n")   -- writes to the PTY; newline included
+local tail = term.read(id, 4000)             -- last 4000 bytes of raw PTY output
+term.focus(id)                                -- reveal the panel and select the tab
+
+for _, t in ipairs(term.list()) do
+  ttt.log(string.format("%s %s %dx%d", t.id, t.label, t.cols, t.rows))
+end
+```
+
+`read` returns the raw PTY bytes (ANSI escapes and the prompt echo included), so
+callers that parse output should strip them. The terminal tabs are ordinary
+interactive tabs: a user can type into them, resize them, and close them.
+
 ### `ttt.open_file(path, [line], [readonly])`
 
 Open a file in the editor, optionally jumping to a specific line and/or opening it in readonly mode.

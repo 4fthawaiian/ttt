@@ -103,6 +103,38 @@ type FilesystemAPI interface {
 	ListDir(path string) ([]FileEntry, error)
 }
 
+// TerminalInfo is one terminal tab as a plugin sees it.
+type TerminalInfo struct {
+	ID    string
+	Label string
+	Cols  int
+	Rows  int
+}
+
+// TerminalAPI is the host's terminal surface for plugins. Spawn/send/focus are
+// gated by `terminal.control`, read/list by `terminal.read`; every call runs on
+// the main thread.
+type TerminalAPI interface {
+	// TerminalSpawn opens a terminal tab for a program and returns its id. An
+	// empty shell inherits the configured terminal program; a named shell uses
+	// exactly the args given.
+	TerminalSpawn(shell string, args, env []string, cwd, label string) (string, error)
+	// TerminalSend writes text to a tab's PTY (a trailing newline is the
+	// caller's job).
+	TerminalSend(id, text string) error
+	// TerminalTail returns the last maxBytes of the tab's raw PTY output
+	// (ANSI escapes included; maxBytes <= 0 means the whole tail).
+	TerminalTail(id string, maxBytes int) (string, error)
+	// TerminalScreen returns the visible screen as plain lines (no ANSI,
+	// trailing blanks trimmed).
+	TerminalScreen(id string) (string, error)
+	// TerminalFocus reveals the panel and selects the tab.
+	TerminalFocus(id string) error
+	// TerminalClose kills the tab's PTY and removes the tab.
+	TerminalClose(id string) error
+	TerminalList() []TerminalInfo
+}
+
 type SystemAPI interface {
 	// Exec runs binary with args, writing stdin to the child's standard input
 	// (nothing is written when stdin is empty).
