@@ -360,7 +360,7 @@ use [`ttt.confirm`](#ttt-confirm) or [`ttt.show_info`](#ttt-show_info) instead.
 
 ### `ttt.set_status_item(side, id, text, [opts])`
 
-Add or update a status bar segment. Requires the `commands` permission.
+Add or update a status bar segment. Requires the `commands` permission. ttt removes a plugin's status items when the plugin is uninstalled, disabled, updated or reloaded.
 
 | Parameter | Type   | Required | Description                                                        |
 |-----------|--------|----------|--------------------------------------------------------------------|
@@ -864,7 +864,7 @@ end)
 
 ### `ttt.on_uninstall(callback)`
 
-Register a cleanup function that runs when the plugin is uninstalled. Use this to remove settings, files, or other state the plugin created during its lifetime. No permission required.
+Register a cleanup function that runs when the plugin is uninstalled. Use this to remove settings, files, or other state the plugin created during its lifetime. No permission required. Tabs, drawers, panels, status items, diagnostics and decorations are closed or cleared after the callback returns, so there's no need to clean those up here.
 
 ```lua
 local ttt = require("ttt")

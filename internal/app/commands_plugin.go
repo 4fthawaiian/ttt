@@ -183,10 +183,11 @@ func (a *App) pluginUninstall() {
 	}, nil)
 }
 
-// ClearPluginSources removes the diagnostics and decorations plugin name set.
+// ClearPluginSources removes the diagnostics, decorations and status items plugin name set.
 func (a *App) ClearPluginSources(name string) {
 	a.EditorGroup.ClearDiagnosticsSource("plugin:" + name)
 	a.EditorGroup.ClearDecorationsSource("plugin:" + name)
+	a.Status.RemoveSegmentsByOwner("plugin:" + name)
 }
 
 func (a *App) doPluginUninstall(name string) {
@@ -195,8 +196,9 @@ func (a *App) doPluginUninstall(name string) {
 	if err := a.PluginManager.Uninstall(name); err != nil {
 		slog.Error("plugin uninstall", "error", err)
 	}
-	// After Uninstall: its on_uninstall callback can still publish.
+	// After Uninstall: its on_uninstall callback can still publish and open tabs.
 	a.ClearPluginSources(name)
+	a.closePluginDrawerAndTabs(name)
 	a.uninstallPluginGrammars(name)
 
 	a.resetPluginDetailButton(name)
@@ -426,6 +428,7 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 			Priority: priority,
 			Text:     text,
 			OnClick:  onClick,
+			Owner:    "plugin:" + p.Name,
 		})
 	}
 	p.RemoveStatusItem = func(id string) {

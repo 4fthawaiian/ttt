@@ -33,6 +33,9 @@ type StatusSegment struct {
 	Text     string
 	Style    term.Style
 	OnClick  func()
+	// Owner groups segments for RemoveSegmentsByOwner, for example
+	// "plugin:<name>" for a plugin's status items. Empty for core segments.
+	Owner string
 }
 
 type StatusBar struct {
@@ -66,6 +69,9 @@ func (s *StatusBar) SetSegment(seg StatusSegment) {
 		if seg.OnClick != nil {
 			existing.OnClick = seg.OnClick
 		}
+		if seg.Owner != "" {
+			existing.Owner = seg.Owner
+		}
 		if seg.Side != "" && seg.Side != existing.Side {
 			existing.Side = seg.Side
 			s.dirty = true
@@ -85,6 +91,19 @@ func (s *StatusBar) RemoveSegment(id string) {
 	if _, ok := s.segments[id]; ok {
 		delete(s.segments, id)
 		s.dirty = true
+	}
+}
+
+// RemoveSegmentsByOwner removes every segment whose Owner is owner.
+func (s *StatusBar) RemoveSegmentsByOwner(owner string) {
+	if owner == "" {
+		return
+	}
+	for id, seg := range s.segments {
+		if seg.Owner == owner {
+			delete(s.segments, id)
+			s.dirty = true
+		}
 	}
 }
 
