@@ -21,7 +21,6 @@ import (
 	"github.com/eugenioenko/ttt/internal/render"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/eugenioenko/ttt/internal/ui"
-	"github.com/eugenioenko/ttt/internal/widgets"
 
 	"github.com/gdamore/tcell/v3"
 )
@@ -302,39 +301,7 @@ Docs: https://tttedit.dev
 
 		pluginsPanel := app.NewPluginsPanel(pluginManager)
 		editor.Sidebar.AddPanel("plugins", "Plugins", pluginsPanel.Adapter)
-		editor.PluginsPanel = pluginsPanel
-		pluginsPanel.OnInstall = func(repoURL, repoPath, name string) {
-			editor.PluginInstallFromURL(repoURL, repoPath, name)
-		}
-		pluginsPanel.OnUninstall = func(name string) {
-			editor.PluginUninstallByName(name)
-		}
-		pluginsPanel.OnToggle = func(name string, enabled bool) {
-			if !enabled {
-				editor.RemovePluginPanels(name)
-				editor.ClearPluginSources(name)
-			}
-			p, err := pluginManager.SetEnabled(name, enabled)
-			if err != nil {
-				slog.Error("toggle plugin", "error", err)
-			}
-			if p != nil {
-				editor.WirePlugin(p)
-			}
-			pluginsPanel.Refresh()
-		}
-		pluginsPanel.OnUpdate = func(name string) {
-			editor.PluginUpdateByName(name)
-		}
-		pluginsPanel.OnOpenDetail = func(entry plugin.RemoteRegistryEntry) {
-			editor.OpenPluginDetail(entry)
-		}
-		pluginsPanel.OnRowMenu = func(name string, enabled bool, screenX, screenY int) {
-			editor.ShowPluginRowMenu(name, enabled, screenX, screenY)
-		}
-		pluginsPanel.OnDropdownMenu = func(entries []widgets.MenuEntry, screenX, screenY int) {
-			editor.ShowPluginDropdownMenu(entries, screenX, screenY)
-		}
+		editor.WirePluginsPanel(pluginsPanel)
 
 		go func() {
 			entries, err := plugin.FetchRemoteRegistry(plugin.DefaultRegistryURL)

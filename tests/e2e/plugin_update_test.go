@@ -167,3 +167,103 @@ func TestPluginUpdateNeedingApprovalReleasesPanels(t *testing.T) {
 	h.assertContains("pdfview requests")
 	h.assertNotContains("pdf page")
 }
+
+func clickDialogButton(t *testing.T, h *testHarness, label string) {
+	t.Helper()
+	for y := 0; y < 30; y++ {
+		row := h.screenRow(y)
+		if x := displayColumnOf(row, label); x >= 0 {
+			h.click(x+1, y)
+			h.redraw()
+			return
+		}
+	}
+	t.Fatalf("button %q not found on screen:\n%s", label, h.screenText())
+}
+
+func TestPluginToggleRequestsApprovalForAdditionalPermissions(t *testing.T) {
+	h, _, _ := newUpdatablePluginHarness(t, `, "fs.read": true`)
+	defer h.stop()
+
+	pp := app.NewPluginsPanel(h.app.PluginManager)
+	h.app.WirePluginsPanel(pp)
+
+	// Update adds fs.read and opens the approval dialog.
+	h.awaitPluginUpdate("pdfview", filepath.Join(h.dir, "paper.pdf"))
+	h.assertContains("pdfview requests")
+
+	// Enabling while already awaiting approval from an update keeps prompting without duplicating the queue.
+	pp.OnToggle("pdfview", true)
+	h.redraw()
+	if h.app.PluginManager.FindPlugin("pdfview") != nil {
+		t.Fatal("plugin initialized before approval when toggled while awaiting update approval")
+	}
+	if len(h.app.PendingPluginApprovals) != 1 {
+		t.Fatalf("pending approvals = %d, want 1", len(h.app.PendingPluginApprovals))
+	}
+	h.assertContains("pdfview requests")
+
+	// Deny leaves it disabled and preserves only previously approved permissions.
+	clickDialogButton(t, h, "Deny")
+	if len(h.app.PendingPluginApprovals) != 0 {
+		t.Fatalf("pending approvals after deny = %d, want 0", len(h.app.PendingPluginApprovals))
+	}
+	entry := h.app.PluginManager.Registry().Find("pdfview")
+	if entry == nil || entry.Enabled || entry.Permissions.FsRead.Enabled() || !entry.Permissions.PanelSidebar {
+		t.Fatalf("registry entry after deny = %+v, want disabled with old permissions only", entry)
+	}
+
+	// Enabling after denial prompts for approval instead of running with old permissions.
+	pp.OnToggle("pdfview", true)
+	h.redraw()
+	if h.app.PluginManager.FindPlugin("pdfview") != nil {
+		t.Fatal("plugin initialized before approval when enabled after denial")
+	}
+	h.assertContains("pdfview requests")
+
+	// Restarting while pending approval keeps it discoverable at startup, and enabling the startup-pending entry prompts without duplicating the queue.
+	h.app.DismissDialog()
+	cfg := filepath.Join(h.dir, "config")
+	restarted := plugin.NewManager(filepath.Join(cfg, "plugins"), filepath.Join(cfg, "plugins.ttt.json"))
+	t.Cleanup(restarted.Shutdown)
+	startupPending := restarted.LoadAll()
+	if len(startupPending) != 1 || startupPending[0].Name != "pdfview" {
+		t.Fatalf("startup pending = %v, want [pdfview]", startupPending)
+	}
+	h.app.PluginManager = restarted
+	h.app.PendingPluginApprovals = startupPending
+	pp = app.NewPluginsPanel(restarted)
+	h.app.WirePluginsPanel(pp)
+	pp.OnToggle("pdfview", true)
+	h.redraw()
+	if restarted.FindPlugin("pdfview") != nil {
+		t.Fatal("plugin initialized before approval when enabled while awaiting startup approval")
+	}
+	if len(h.app.PendingPluginApprovals) != 1 {
+		t.Fatalf("pending approvals = %d, want 1", len(h.app.PendingPluginApprovals))
+	}
+	h.assertContains("pdfview requests")
+
+	// Allow initializes the plugin with the approved grant and wires its panel.
+	clickDialogButton(t, h, "Allow")
+	loaded := h.app.PluginManager.FindPlugin("pdfview")
+	if loaded == nil || !loaded.Loaded() || !loaded.Granted.FsRead.Enabled() {
+		t.Fatalf("plugin after Allow = %+v, want loaded with fs.read granted", loaded)
+	}
+	h.app.Sidebar.SetActivePanel("plugin.pdfview")
+	h.redraw()
+	h.assertContains("pdf sidebar 2.0.0")
+
+	// Ordinary disable and re-enable with unchanged permissions loads without prompting.
+	pp.OnToggle("pdfview", false)
+	h.redraw()
+	if h.app.PluginManager.FindPlugin("pdfview") != nil {
+		t.Fatal("plugin still loaded after disable")
+	}
+	pp.OnToggle("pdfview", true)
+	h.redraw()
+	h.assertNotContains("pdfview requests")
+	if reenabled := h.app.PluginManager.FindPlugin("pdfview"); reenabled == nil || !reenabled.Loaded() || !reenabled.Granted.FsRead.Enabled() {
+		t.Fatalf("plugin after ordinary re-enable = %+v", reenabled)
+	}
+}

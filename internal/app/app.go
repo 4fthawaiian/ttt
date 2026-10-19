@@ -99,6 +99,7 @@ type App struct {
 	Version                string
 	PluginManager          *plugin.Manager
 	PendingPluginApprovals []*plugin.Plugin
+	approvalDialog         ui.Widget
 	// PendingFileTargets holds cursor positions parsed from `path:line[:col]`
 	// arguments. They are applied after the first render, once the viewport
 	// has a real height to scroll against.
@@ -893,6 +894,7 @@ func (a *App) ClosePluginDrawer() {
 }
 
 func (a *App) DismissDialog() {
+	a.approvalDialog = nil
 	a.Root.PopOverlay()
 	a.FocusEditor()
 }

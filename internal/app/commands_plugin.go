@@ -314,7 +314,11 @@ func (a *App) ShowPluginApprovalDialog(p *plugin.Plugin) {
 	}
 	dialog.Build()
 
+	if a.approvalDialog != nil {
+		a.Root.RemoveOverlay(a.approvalDialog)
+	}
 	adapter := ui.NewWidgetAdapter(dialog)
+	a.approvalDialog = adapter
 	a.ShowDialog(adapter)
 }
 
@@ -838,6 +842,37 @@ func (a *App) PluginUninstallByName(name string) {
 	})
 }
 
+func (a *App) PluginToggleByName(name string, enabled bool) {
+	if !enabled {
+		a.RemovePluginPanels(name)
+		a.ClearPluginSources(name)
+	}
+	p, err := a.PluginManager.SetEnabled(name, enabled)
+	if err != nil {
+		slog.Error("toggle plugin", "error", err)
+	}
+	if p != nil && p.Loaded() {
+		a.WirePlugin(p)
+		a.installPluginGrammars(p)
+	}
+	if a.PluginsPanel != nil {
+		a.PluginsPanel.Refresh()
+	}
+	if p != nil && !p.Loaded() {
+		a.RemovePluginPanels(name)
+		a.ClearPluginSources(name)
+		a.requestPluginApproval(p)
+	}
+}
+
+func (a *App) requestPluginApproval(p *plugin.Plugin) {
+	a.PendingPluginApprovals = slices.DeleteFunc(a.PendingPluginApprovals, func(existing *plugin.Plugin) bool {
+		return existing.Name == p.Name
+	})
+	a.PendingPluginApprovals = slices.Insert(a.PendingPluginApprovals, 0, p)
+	a.ShowPluginApprovalDialog(p)
+}
+
 func (a *App) PluginUpdateByName(name string) {
 	update := a.PluginManager.PrepareUpdate(name)
 	go func() {
@@ -945,14 +980,20 @@ func (a *App) ShowPluginRowMenu(name string, enabled bool, x, y int) {
 		case "toggle":
 			if a.PluginsPanel.OnToggle != nil {
 				a.PluginsPanel.OnToggle(name, !enabled)
+			} else {
+				a.PluginToggleByName(name, !enabled)
 			}
 		case "update":
 			if a.PluginsPanel.OnUpdate != nil {
 				a.PluginsPanel.OnUpdate(name)
+			} else {
+				a.PluginUpdateByName(name)
 			}
 		case "uninstall":
 			if a.PluginsPanel.OnUninstall != nil {
 				a.PluginsPanel.OnUninstall(name)
+			} else {
+				a.PluginUninstallByName(name)
 			}
 		}
 	}

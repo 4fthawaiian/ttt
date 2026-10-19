@@ -672,6 +672,15 @@ func (m *Manager) SetEnabled(name string, enabled bool) (*Plugin, error) {
 	dir := filepath.Join(m.pluginsDir, name)
 	manifest, err := LoadManifest(dir)
 	if err != nil {
+		for _, extra := range m.extraDirs {
+			d := filepath.Join(extra, name)
+			if mf, e := LoadManifest(d); e == nil {
+				dir, manifest, err = d, mf, nil
+				break
+			}
+		}
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -680,12 +689,33 @@ func (m *Manager) SetEnabled(name string, enabled bool) (*Plugin, error) {
 		return nil, fmt.Errorf("plugin %q not in registry", name)
 	}
 
+	idx := slices.IndexFunc(m.plugins, func(p *Plugin) bool { return p.Name == name })
+
 	p := &Plugin{
 		Name:     manifest.Name,
 		Dir:      dir,
+		Repo:     regEntry.Repo,
+		RepoPath: regEntry.Path,
 		Manifest: manifest,
 		Granted:  m.grant(regEntry, manifest.Permissions),
 	}
+
+	diff := DiffPermissions(regEntry.Permissions, manifest.Permissions)
+	if !diff.IsEmpty() {
+		if idx >= 0 {
+			m.plugins[idx].Destroy()
+			m.plugins = slices.Delete(m.plugins, idx, idx+1)
+		}
+		return p, nil
+	}
+
+	if idx >= 0 {
+		m.plugins[idx].Destroy()
+		m.plugins = slices.Delete(m.plugins, idx, idx+1)
+	}
+
+	m.wireAPIs(p)
+	p.AppVersion = m.appVersion
 	if err := m.initPlugin(p); err != nil {
 		return nil, err
 	}

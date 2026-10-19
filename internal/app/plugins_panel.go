@@ -272,3 +272,14 @@ func (pp *PluginsPanel) SetAvailable(entries []plugin.RemoteRegistryEntry) {
 	pp.SearchTree.Config.EmptyText = "Type to search plugins"
 	pp.Refresh()
 }
+
+func (a *App) WirePluginsPanel(pp *PluginsPanel) {
+	a.PluginsPanel = pp
+	pp.OnInstall = a.PluginInstallFromURL
+	pp.OnUninstall = a.PluginUninstallByName
+	pp.OnToggle = a.PluginToggleByName
+	pp.OnUpdate = a.PluginUpdateByName
+	pp.OnOpenDetail = a.OpenPluginDetail
+	pp.OnRowMenu = a.ShowPluginRowMenu
+	pp.OnDropdownMenu = a.ShowPluginDropdownMenu
+}

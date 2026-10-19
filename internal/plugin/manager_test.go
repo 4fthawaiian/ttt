@@ -632,3 +632,113 @@ func TestDenyingAnOldAnyDestinationGrantDoesNotGrantIt(t *testing.T) {
 		t.Errorf("enabled after a deny with network.http %+v", p.Granted.NetworkHTTP)
 	}
 }
+
+func TestSetEnabledRequestsApprovalForAdditionalPermissions(t *testing.T) {
+	pluginsDir := t.TempDir()
+	regPath := filepath.Join(t.TempDir(), "registry.json")
+	dir := filepath.Join(pluginsDir, "grower")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	entrySrc := `
+		local ttt = require("ttt")
+		ttt.log("info", "entry executed")
+		ttt.register({
+			commands = {
+				{ id = "grower.hello", title = "Grower: Hello", handler = function() end },
+			},
+		})
+	`
+	if err := os.WriteFile(filepath.Join(dir, "main.ttt.lua"), []byte(entrySrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"grower","version":"2.0.0","entry":"main.ttt.lua","permissions":{"commands":true,"system.exec":["curl"]}}`
+	if err := os.WriteFile(filepath.Join(dir, "plugin.ttt.json"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	registry := `[{"name": "grower", "version": "1.0.0", "enabled": true, "permissions": {"commands": true, "editor.read": true}}]`
+	if err := os.WriteFile(regPath, []byte(registry), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var logged []string
+	m := NewManager(pluginsDir, regPath)
+	t.Cleanup(m.Shutdown)
+	m.SetLogFactory(func(string) func(string, string) {
+		return func(_, msg string) { logged = append(logged, msg) }
+	})
+
+	pending := m.LoadAll()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %d, want 1", len(pending))
+	}
+	if err := m.DenyPlugin(pending[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := m.SetEnabled("grower", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p == nil || p.Loaded() || p.Enabled || m.FindPlugin("grower") != nil {
+		t.Fatalf("SetEnabled initialized plugin before approval: p=%+v loaded=%v inManager=%v", p, p != nil && p.Loaded(), m.FindPlugin("grower"))
+	}
+	if len(logged) != 0 {
+		t.Fatalf("entry point executed before approval: logged=%v", logged)
+	}
+
+	// Pending approval stays discoverable after a restart without executing the entry point.
+	restarted := NewManager(pluginsDir, regPath)
+	t.Cleanup(restarted.Shutdown)
+	if restartPending := restarted.LoadAll(); len(restartPending) != 1 || restartPending[0].Name != "grower" {
+		t.Fatalf("pending after restart = %v, want [grower]", restartPending)
+	}
+
+	// Denying again leaves it disabled and preserves only approved permissions still declared.
+	if err := m.DenyPlugin(p); err != nil {
+		t.Fatal(err)
+	}
+	entry := m.registry.Find("grower")
+	if entry == nil || entry.Enabled || !entry.Permissions.Commands || entry.Permissions.EditorRead || len(entry.Permissions.SystemExec) != 0 {
+		t.Fatalf("registry entry after deny = %+v, want disabled with commands only", entry)
+	}
+
+	// Enabling again and approving initializes the plugin with the full approved grant.
+	p, err = m.SetEnabled("grower", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Loaded() {
+		t.Fatal("SetEnabled loaded plugin before ApproveAndLoad")
+	}
+	if err := m.ApproveAndLoad(p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Loaded() || !p.Enabled || m.FindPlugin("grower") != p {
+		t.Fatal("ApproveAndLoad did not initialize and register plugin")
+	}
+	if !p.Granted.Commands || p.Granted.CheckExec("curl") != nil {
+		t.Fatalf("approved grant = %+v, want commands and curl", p.Granted)
+	}
+	if len(logged) != 1 || logged[0] != "entry executed" {
+		t.Fatalf("logged after approval = %v, want [entry executed]", logged)
+	}
+
+	// Ordinary disable and re-enable with unchanged permissions loads immediately.
+	if _, err := m.SetEnabled("grower", false); err != nil {
+		t.Fatal(err)
+	}
+	if m.FindPlugin("grower") != nil {
+		t.Fatal("plugin still loaded after disable")
+	}
+	p2, err := m.SetEnabled("grower", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2 == nil || !p2.Loaded() || !p2.Enabled || m.FindPlugin("grower") != p2 {
+		t.Fatalf("SetEnabled with unchanged permissions did not load plugin: %+v", p2)
+	}
+	if !p2.Granted.Commands || p2.Granted.CheckExec("curl") != nil {
+		t.Fatalf("re-enabled grant = %+v, want commands and curl", p2.Granted)
+	}
+}
