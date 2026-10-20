@@ -217,3 +217,68 @@ func TestMarkdownWideRenderingAndMouseSelection(t *testing.T) {
 		t.Fatal("wide rune must not straddle the clipping boundary")
 	}
 }
+
+func TestMarkdownFullWidthDividerPreservesContentPadding(t *testing.T) {
+	m := NewMarkdownWidget()
+	m.FullWidthDividers = true
+	m.Box.PaddingLeft, m.Box.PaddingRight = 1, 1
+	m.SetContent("text\n\n---\n\ntext")
+	sv := NewScrollViewWidget(m)
+	m.SetScrollParent(sv)
+	s := renderWidget(sv, 0, 0, 20, 8)
+	for y, line := range m.wrapped {
+		if line.Kind == markdown.KindDivider {
+			for x := range sv.lastViewW {
+				if s.cells[y][x].Ch != '─' {
+					t.Fatalf("divider did not extend through padding at x=%d", x)
+				}
+			}
+		}
+	}
+	if s.cells[0][0].Ch != ' ' || s.cells[0][1].Ch != 't' {
+		t.Fatal("paragraph lost its left padding")
+	}
+	pos := m.mouseToContent(1, 0)
+	if pos.Line != 0 || pos.Col != 0 {
+		t.Fatalf("padded text hit = %+v, want first character", pos)
+	}
+}
+
+func TestMarkdownFullWidthDividerPreservesBordersAndMargins(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		left, right bool
+	}{{"left", true, false}, {"right", false, true}, {"both", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewMarkdownWidget()
+			m.FullWidthDividers = true
+			m.Box = BoxModel{
+				BorderTop: true, BorderLeft: tc.left, BorderRight: tc.right,
+				MarginLeft: 1, MarginRight: 2, MarginTop: 1,
+				PaddingLeft: 2, PaddingRight: 1, PaddingTop: 1,
+				Borders: term.RoundedBorderSet(),
+			}
+			m.SetContent("text\n\n---\n\ntext")
+			s := renderWidget(m, 0, 0, 24, 10)
+			for row, line := range m.wrapped {
+				if line.Kind != markdown.KindDivider {
+					continue
+				}
+				y := row + 3
+				for x := range 24 {
+					want := '─'
+					if x < 1 || x >= 22 {
+						want = 0
+					} else if (x == 1 && tc.left) || (x == 21 && tc.right) {
+						want = '│'
+					}
+					if got := s.cells[y][x].Ch; got != want {
+						t.Fatalf("divider cell (%d,%d) = %q, want %q", x, y, got, want)
+					}
+				}
+				return
+			}
+			t.Fatal("divider not rendered")
+		})
+	}
+}

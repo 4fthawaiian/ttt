@@ -240,6 +240,7 @@ func updateWidget(w widgets.Widget, desc WidgetDesc, p *Plugin) {
 					maxWidth = desc.WrapWidth
 				}
 				md.SetMaxWidth(maxWidth)
+				md.FullWidthDividers = desc.FullWidthDividers
 				md.SetContent(desc.MarkdownContent)
 			}
 			sv.Follow = desc.Follow
@@ -629,6 +630,7 @@ func createProgressWidget(desc WidgetDesc) *widgets.ProgressWidget {
 
 func createMarkdownWidget(desc WidgetDesc, p *Plugin) *widgets.ScrollViewWidget {
 	md := widgets.NewMarkdownWidget()
+	md.FullWidthDividers = desc.FullWidthDividers
 	maxWidth := 80
 	if p != nil && p.Markdown.WrapWidth > 0 {
 		maxWidth = p.Markdown.WrapWidth
