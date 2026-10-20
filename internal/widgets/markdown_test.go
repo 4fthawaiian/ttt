@@ -1,11 +1,14 @@
 package widgets
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/eugenioenko/ttt/internal/core/selection"
 	"github.com/eugenioenko/ttt/internal/markdown"
 	"github.com/eugenioenko/ttt/internal/term"
+	"github.com/eugenioenko/ttt/internal/textwidth"
+	"github.com/gdamore/tcell/v3"
 )
 
 func mkLine(text string) markdown.Line {
@@ -119,5 +122,98 @@ func TestMarkdownSelectedTextEmpty(t *testing.T) {
 	got = m.sel.Text(m.wrappedTextLines(), m.selEnd.Line, m.selEnd.Col)
 	if got != "" {
 		t.Errorf("zero-width: got %q, want empty", got)
+	}
+}
+
+func TestMarkdownProseWrapsInsideVerticalScrollbar(t *testing.T) {
+	m := NewMarkdownWidget()
+	m.Box.PaddingLeft, m.Box.PaddingRight = 1, 1
+	m.SetContent(strings.Repeat("alpha beta gamma delta epsilon ", 20))
+	sv := NewScrollViewWidget(m)
+	m.SetScrollParent(sv)
+	renderWidget(sv, 0, 0, 24, 8)
+	if sv.lastContentH <= sv.lastViewH || sv.lastContentW > sv.lastViewW {
+		t.Fatalf("prose should scroll vertically only: content %dx%d, viewport %dx%d", sv.lastContentW, sv.lastContentH, sv.lastViewW, sv.lastViewH)
+	}
+	if m.wrapWidth != sv.lastViewW-2 {
+		t.Fatalf("wrap width = %d, want viewport minus padding = %d", m.wrapWidth, sv.lastViewW-2)
+	}
+}
+
+func TestMarkdownCodeOverflowDoesNotReflowProse(t *testing.T) {
+	m := NewMarkdownWidget()
+	m.Box.PaddingLeft, m.Box.PaddingRight = 1, 1
+	m.SetContent(strings.Repeat("alpha beta gamma delta ", 10) + "\n\n```\n" + strings.Repeat("x", 120) + "\n```")
+	sv := NewScrollViewWidget(m)
+	m.SetScrollParent(sv)
+	for _, width := range []int{24, 34} {
+		renderWidget(sv, 0, 0, width, 8)
+		wrapWidth, rows := m.wrapWidth, len(m.wrapped)
+		if wrapWidth != sv.lastViewW-2 || rows != sv.lastContentH {
+			t.Fatalf("measurement and render disagree: wrap=%d, viewport=%d, rows=%d, measured=%d", wrapWidth, sv.lastViewW, rows, sv.lastContentH)
+		}
+		if sv.lastContentW <= sv.lastViewW {
+			t.Fatal("long code should retain horizontal scrolling")
+		}
+		sv.HandleEvent(tcell.NewEventMouse(5, 5, tcell.WheelRight, 0))
+		renderWidget(sv, 0, 0, width, 8)
+		if m.wrapWidth != wrapWidth || len(m.wrapped) != rows {
+			t.Fatal("horizontal scroll changed paragraph wrapping")
+		}
+	}
+}
+
+func TestMarkdownWideProseScrollSize(t *testing.T) {
+	m := NewMarkdownWidget()
+	m.Box.PaddingLeft, m.Box.PaddingRight = 1, 1
+	m.SetContent(strings.Repeat("界界 語語 abc ", 20))
+	sv := NewScrollViewWidget(m)
+	m.SetScrollParent(sv)
+	renderWidget(sv, 0, 0, 24, 8)
+	if sv.lastContentW > sv.lastViewW || sv.lastContentH <= sv.lastViewH {
+		t.Fatalf("wide prose should scroll vertically only: content %dx%d, viewport %dx%d", sv.lastContentW, sv.lastContentH, sv.lastViewW, sv.lastViewH)
+	}
+	for _, row := range m.wrapped {
+		if textwidth.String(row.Text()) > m.wrapWidth {
+			t.Fatalf("row %q exceeds wrap width %d", row.Text(), m.wrapWidth)
+		}
+	}
+}
+
+func TestMarkdownWideRenderingAndMouseSelection(t *testing.T) {
+	m := NewMarkdownWidget()
+	m.SetContent("a界b語c")
+	sv := NewScrollViewWidget(m)
+	m.SetScrollParent(sv)
+	renderWidget(sv, 3, 2, 12, 4)
+	for _, tt := range []struct{ x, col int }{{3, 0}, {4, 1}, {5, 1}, {6, 2}, {7, 3}, {8, 3}, {9, 4}, {10, 5}} {
+		if pos := m.mouseToContent(tt.x, 2); pos.Col != tt.col {
+			t.Errorf("mouse column %d = rune %d, want %d", tt.x, pos.Col, tt.col)
+		}
+	}
+	m.sel.Start(0, 1)
+	m.selEnd = selection.Position{Line: 0, Col: 4}
+	v := newVirtualSurface(12, 4)
+	m.Render(v)
+	for _, tt := range []struct {
+		x        int
+		ch       rune
+		selected bool
+	}{{0, 'a', false}, {1, '界', true}, {3, 'b', true}, {4, '語', true}, {6, 'c', false}} {
+		cell := v.cells[0][tt.x]
+		if cell.Ch != tt.ch || (cell.BgStyle == term.StyleSelection) != tt.selected {
+			t.Errorf("column %d: got %+v", tt.x, cell)
+		}
+	}
+	if got := m.sel.Text(m.wrappedTextLines(), m.selEnd.Line, m.selEnd.Col); got != "界b語" {
+		t.Fatalf("selected text = %q", got)
+	}
+	m.SetScrollParent(nil)
+	m.lines = []markdown.Line{{Kind: markdown.KindCode, Spans: []markdown.Span{{Text: "a界"}}}}
+	m.wrapWidth = 0
+	v = newVirtualSurface(2, 1)
+	m.Render(v)
+	if v.cells[0][1].Ch != ' ' {
+		t.Fatal("wide rune must not straddle the clipping boundary")
 	}
 }
