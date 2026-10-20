@@ -138,26 +138,29 @@ type CommitDetailWidget struct {
 	Metadata string
 	Files    []CommitDetailFile
 
-	SyntaxHighlight  bool
-	Icons            string
-	TopLine          int
-	LeftCol          int
-	wrapMode         DiffWrapMode
-	wrapExplicit     bool
-	mode             DiffMode
-	modeExplicit     bool
-	contextMode      DiffContextMode
-	contextExplicit  bool
-	highContrast     bool
-	emphasizeGaps    bool
-	signs            bool
-	signsColor       bool
-	gutterHighlight  bool
-	colorNumbers     bool
-	chevronCollapsed rune
-	chevronExpanded  rune
-	gutterStyle      string
-	collapsedFiles   []bool
+	SyntaxHighlight    bool
+	Icons              string
+	TopLine            int
+	LeftCol            int
+	wrapMode           DiffWrapMode
+	wrapExplicit       bool
+	mode               DiffMode
+	modeExplicit       bool
+	contextMode        DiffContextMode
+	contextExplicit    bool
+	highContrast       bool
+	emphasizeGaps      bool
+	signs              bool
+	signsColor         bool
+	gutterHighlight    bool
+	colorNumbers       bool
+	chevronCollapsed   rune
+	chevronExpanded    rune
+	gutterStyle        string
+	collapsedFiles     []bool
+	focused            bool
+	keyboardDisclosure bool
+	selectedDisclosure detailDisclosure
 
 	rows            []commitDetailRow
 	visualRows      []commitDetailVisualRow
@@ -899,6 +902,9 @@ func (d *CommitDetailWidget) Render(surface Surface) {
 		d.contentW = min(leftW, rightW)
 	}
 	d.clampScroll()
+	if d.keyboardDisclosure {
+		d.reconcileDisclosure(d.disclosureRows())
+	}
 
 	leftCol := d.LeftCol
 	if d.IsWrapped() {
@@ -922,6 +928,11 @@ func (d *CommitDetailWidget) Render(surface Surface) {
 		}
 		if v := d.rowView(visual.row); v != nil {
 			rect := Rect{X: r.X, Y: r.Y + screenY, W: viewW, H: n}
+			v.focusedGap = nil
+			if d.selectedDisclosure.gap >= 0 && d.disclosureFocused(row.fileIndex, d.selectedDisclosure.gap) {
+				v.focusedGap = &d.selectedDisclosure.gap
+			}
+			v.applyOverlayOptions()
 			v.renderEmbedded(surface.Sub(Rect{X: 0, Y: screenY, W: viewW, H: n}), rect, visual.offset, leftCol)
 		}
 		screenY += n
@@ -1092,10 +1103,14 @@ func (d *CommitDetailWidget) renderMessageHeader(surface Surface, y, viewW int) 
 	}
 	controlW := textwidth.String(label)
 	controlX := viewW - controlW - 1
-	if controlX <= 1+textwidth.String(header) {
+	if controlX < 1 || controlX <= 1+textwidth.String(header) && !(d.keyboardDisclosure && d.selectedDisclosure.file == "") {
 		return
 	}
-	d.drawStaticText(surface, controlX, y, controlW, label, term.StyleCommitHeader, term.StyleCommitHeader, true)
+	controlStyle := term.StyleCommitHeader
+	if d.disclosureFocused(-1, -1) {
+		controlStyle = term.StyleSidebarSelected
+	}
+	d.drawStaticText(surface, controlX, y, controlW, label, controlStyle, controlStyle, true)
 	r := d.GetRect()
 	d.topControl = Rect{X: r.X + controlX, Y: r.Y + y, W: controlW, H: 1}
 }
@@ -1107,13 +1122,21 @@ func (d *CommitDetailWidget) renderHeaderDivider(surface Surface, y, viewW int) 
 }
 
 func (d *CommitDetailWidget) renderHeading(surface Surface, rowIndex int, row commitDetailRow, visual commitDetailVisualRow, y, viewW int) {
+	bg := term.StyleDefault
+	if d.disclosureFocused(row.fileIndex, -1) {
+		bg = term.StyleSidebarSelected
+		surface.ClearRect(0, y, viewW, 1, bg)
+	}
 	headingStyle := term.StyleDefault
 	if row.fileIndex >= 0 && row.fileIndex < len(d.Files) && d.Files[row.fileIndex].Stage != CommitDetailStageNone {
 		headingStyle = StatusStyle(d.Files[row.fileIndex].Status)
 	}
+	if bg == term.StyleSidebarSelected {
+		headingStyle = bg
+	}
 	collapsed := row.fileIndex >= 0 && row.fileIndex < len(d.collapsedFiles) && d.collapsedFiles[row.fileIndex]
 	if !visual.continuation {
-		surface.SetCell(1, y, term.Cell{Ch: d.chevron(collapsed), Style: headingStyle, Bold: true})
+		surface.SetCell(1, y, term.Cell{Ch: d.chevron(collapsed), Style: headingStyle, BgStyle: bg, Bold: true})
 	}
 	r := d.GetRect()
 	d.fileControls = append(d.fileControls, commitDetailControl{
@@ -1127,11 +1150,11 @@ func (d *CommitDetailWidget) renderHeading(surface Surface, rowIndex int, row co
 			textX += fileIconPrefixWidth(d.Icons, path)
 		} else {
 			textX = drawFileIcon(surface, textX, y, viewW, fileIconRender{
-				mode: d.Icons, path: path, bgStyle: term.StyleDefault, bold: true,
+				mode: d.Icons, path: path, bgStyle: bg, selected: bg == term.StyleSidebarSelected, bold: true,
 			})
 		}
 	}
-	d.drawTextRow(surface, textX, y, viewW-textX, row.text, headingStyle, term.StyleDefault, row.bold, visual.leftStart, rowIndex)
+	d.drawTextRow(surface, textX, y, viewW-textX, row.text, headingStyle, bg, row.bold, visual.leftStart, rowIndex)
 }
 
 func (d *CommitDetailWidget) drawStaticText(surface Surface, x, y, width int, text string, style, bg term.Style, bold bool) {
@@ -1290,20 +1313,25 @@ func (d *CommitDetailWidget) renderStickyHeading(surface Surface, viewW int) {
 	if row.fileIndex < 0 || row.fileIndex >= len(d.Files) {
 		return
 	}
-	for column := 0; column < viewW; column++ {
-		surface.SetCell(column, 0, term.Cell{Ch: ' ', Style: term.StyleDefault})
+	bg := term.StyleDefault
+	if d.disclosureFocused(row.fileIndex, -1) {
+		bg = term.StyleSidebarSelected
 	}
+	surface.ClearRect(0, 0, viewW, 1, bg)
 	headingStyle := term.StyleDefault
 	if d.Files[row.fileIndex].Stage != CommitDetailStageNone {
 		headingStyle = StatusStyle(d.Files[row.fileIndex].Status)
 	}
-	surface.SetCell(1, 0, term.Cell{Ch: d.chevron(false), Style: headingStyle, Bold: true})
+	if bg == term.StyleSidebarSelected {
+		headingStyle = bg
+	}
+	surface.SetCell(1, 0, term.Cell{Ch: d.chevron(false), Style: headingStyle, BgStyle: bg, Bold: true})
 	textX := drawFileIcon(surface, 3, 0, viewW, fileIconRender{
-		mode: d.Icons, path: d.Files[row.fileIndex].Path, bgStyle: term.StyleDefault, bold: true,
+		mode: d.Icons, path: d.Files[row.fileIndex].Path, bgStyle: bg, selected: bg == term.StyleSidebarSelected, bold: true,
 	})
 	path := truncateCommitDetailPath(commitDetailFileHeading(d.Files[row.fileIndex]), viewW-textX)
-	drawTextSegment(surface, textX, 0, viewW-textX, path, 0, 0, term.Cell{Ch: ' '}, func(_ int, ch rune) term.Cell {
-		return term.Cell{Ch: ch, Style: headingStyle, Bold: true}
+	drawTextSegment(surface, textX, 0, viewW-textX, path, 0, 0, term.Cell{Ch: ' ', BgStyle: bg}, func(_ int, ch rune) term.Cell {
+		return term.Cell{Ch: ch, Style: headingStyle, BgStyle: bg, Bold: true}
 	})
 	r := d.GetRect()
 	d.stickyRect = Rect{X: r.X, Y: r.Y, W: viewW, H: 1}
@@ -1421,6 +1449,9 @@ func (d *CommitDetailWidget) HandleEvent(ev tcell.Event) EventResult {
 
 	switch event := ev.(type) {
 	case *tcell.EventKey:
+		if d.handleDisclosureKey(event) {
+			return EventConsumed
+		}
 		switch event.Key() {
 		case tcell.KeyUp:
 			d.TopLine--
@@ -1501,35 +1532,32 @@ func (d *CommitDetailWidget) handlePointer(event *tcell.EventMouse) EventResult 
 		}
 	}
 	if primaryPressed {
+		d.keyboardDisclosure = false
 		d.primaryPressed = true
 		if d.disclosurePressed {
 			return EventConsumed
 		}
 		if freshPrimaryPress && !d.selecting && pointInCommitDetailRect(mx, my, d.topControl) {
-			if d.allFilesCollapsed() {
-				d.ExpandAllFiles()
-			} else {
-				d.CollapseAllFiles()
-			}
+			d.activateDisclosure(d.disclosure(-1, -1))
 			d.disclosurePressed = true
 			return EventConsumed
 		}
 		if freshPrimaryPress && !d.selecting && pointInCommitDetailRect(mx, my, d.stickyControl.rect) {
-			d.toggleFile(d.stickyControl.fileIndex)
+			d.activateDisclosure(d.disclosure(d.stickyControl.fileIndex, -1))
 			d.disclosurePressed = true
 			return EventConsumed
 		}
 		if freshPrimaryPress && !d.selecting {
 			for _, control := range d.fileControls {
 				if pointInCommitDetailRect(mx, my, control.rect) {
-					d.toggleFile(control.fileIndex)
+					d.activateDisclosure(d.disclosure(control.fileIndex, -1))
 					d.disclosurePressed = true
 					return EventConsumed
 				}
 			}
 			if overFile {
 				if gap, ok := d.Files[fileIndex].view.gapAtPoint(mx, my); ok {
-					d.requestFileContext(fileIndex, gap)
+					d.activateDisclosure(d.disclosure(fileIndex, gap))
 					d.disclosurePressed = true
 					return EventConsumed
 				}
