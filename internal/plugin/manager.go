@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
@@ -56,6 +57,38 @@ func NewManager(pluginsDir, registryPath string, extraDirs ...string) *Manager {
 	}
 }
 
+// isLinkedDir reports whether path is a symlink resolving to a directory
+// outside pluginDir, so a linked plugin loads once instead of twice or not
+// at all.
+func isLinkedDir(path, pluginDir string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	realDir, err := filepath.EvalSymlinks(pluginDir)
+	if err != nil {
+		realDir = pluginDir
+	}
+	// Resolve both sides to absolute paths. EvalSymlinks keeps a relative path
+	// relative unless a symlink target is absolute, and filepath.Rel rejects a
+	// relative/absolute mix, which would read as an external target and admit
+	// an internal link.
+	realAbs, err := filepath.Abs(real)
+	if err != nil {
+		return true
+	}
+	realDirAbs, err := filepath.Abs(realDir)
+	if err != nil {
+		return true
+	}
+	rel, err := filepath.Rel(realDirAbs, realAbs)
+	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func (m *Manager) LoadAll() []*Plugin {
 	os.MkdirAll(m.pluginsDir, 0755)
 
@@ -77,11 +110,15 @@ func (m *Manager) LoadAll() []*Plugin {
 			continue
 		}
 		for _, entry := range entries {
+			dir := filepath.Join(pluginDir, entry.Name())
 			if !entry.IsDir() {
-				continue
+				// entry.IsDir reports the link's own type, so a symlinked
+				// plugin dir needs its target checked instead.
+				if entry.Type()&fs.ModeSymlink == 0 || !isLinkedDir(dir, pluginDir) {
+					continue
+				}
 			}
 
-			dir := filepath.Join(pluginDir, entry.Name())
 			manifest, err := LoadManifest(dir)
 			if err != nil {
 				slog.Warn("skip plugin", "dir", entry.Name(), "error", err)
