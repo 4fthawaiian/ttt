@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/eugenioenko/ttt/internal/core/undo"
 	"github.com/eugenioenko/ttt/internal/lsp"
 	"github.com/eugenioenko/ttt/internal/ui"
+	"github.com/gdamore/tcell/v3"
 )
 
 func completionTestApp(t *testing.T, name, content string) *App {
@@ -124,6 +126,75 @@ func TestSignatureHelpReplyNeedsCursorInCall(t *testing.T) {
 	a.applySignatureHelp(buf, 0, 4, result)
 	if a.EditorGroup.SignatureHelp == nil {
 		t.Fatal("signature help not shown inside the call")
+	}
+}
+
+func TestLocationResultDismissesSignatureHelpAndCancelsInFlightRequest(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "a.go")
+	second := filepath.Join(dir, "b.go")
+	if err := os.WriteFile(first, []byte("package p\n\tcall(\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("package p\nfunc call() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := prepareListenTestApp(t)
+	a.EditorGroup.OpenFile(first)
+	moveCursor(a, 1, 6)
+	startListenTestEventLoop(t, a)
+
+	var lateRun func()
+	if err := runExecMain(a, func() error {
+		a.ShowSignatureHelp(&SignatureHelpResult{Label: "call(value string)"})
+		buf := a.EditorGroup.ActiveBuffer()
+		a.completion.signature = asynctask.New[*SignatureHelpResult](
+			asynctask.TaskOptions{Run: func(fn func()) { lateRun = fn }},
+			func(fn func()) error { fn(); return nil },
+		)
+		a.completion.signature.Schedule(func(context.Context) (*SignatureHelpResult, error) {
+			return &SignatureHelpResult{Label: "staleCall(value string)"}, nil
+		}, func(res *SignatureHelpResult, err error) {
+			if err == nil {
+				a.applySignatureHelp(buf, 1, 6, res)
+			}
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.Screen.PostEvent(tcell.NewEventInterrupt(&LocationResult{
+		Locations: []lsp.Location{{
+			URI:   FileURI(second),
+			Range: lsp.Range{Start: lsp.Position{Line: 1, Character: 0}},
+		}},
+	}))
+
+	if err := runExecMain(a, func() error {
+		if got := a.EditorGroup.ActiveFilePath(); got != second {
+			t.Fatalf("active file = %q, want %q", got, second)
+		}
+		if a.EditorGroup.SignatureHelp != nil {
+			t.Fatal("signature help remained visible after LocationResult opened another file")
+		}
+		if a.completion.signature.Pending() {
+			t.Fatal("in-flight signature help request was not cancelled after LocationResult navigation")
+		}
+		// Even if the user returns to the first file before a late worker finishes,
+		// the cancelled request cannot reopen the popup.
+		a.EditorGroup.OpenFile(first)
+		moveCursor(a, 1, 6)
+		if lateRun != nil {
+			lateRun()
+		}
+		if a.EditorGroup.SignatureHelp != nil {
+			t.Fatal("late signature help response from previous file reopened popup after navigation")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -313,6 +313,7 @@ func RunEventLoop(
 					app.EditorGroup.OpenFile(path)
 					app.EditorGroup.GoToLine(loc.Range.Start.Line + 1)
 					app.Root.SetFocus(app.EditorGroup)
+					syncStatus()
 				}
 			case *RenameResult:
 				app.ApplyWorkspaceEdit(v.Edit)

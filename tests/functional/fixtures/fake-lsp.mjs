@@ -182,6 +182,17 @@ function handle(message) {
         selectionRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
       }] : []);
       break;
+    case "textDocument/definition":
+      respond(message.id, [
+        {
+          uri: new URL("other.js", message.params.textDocument.uri).href,
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 0 },
+          },
+        },
+      ]);
+      break;
     case "textDocument/rename":
       respond(message.id, {
         documentChanges: [{

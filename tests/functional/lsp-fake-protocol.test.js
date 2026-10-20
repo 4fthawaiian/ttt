@@ -451,6 +451,45 @@ describe("deterministic fake LSP protocol", () => {
     expect(snapshots[after]).not.toContain("fakeSignature");
   });
 
+  it("closes signature help when definition navigation opens another file", () => {
+    startCase("signature-definition", [], 100, [["other.js", "// other file\n"]]);
+
+    tui.type("console.log(");
+    tui.waitFor("fakeSignature(value: string)");
+    tui.exec("Go to Definition");
+    tui.waitFor("// other file");
+    const after = tui.snapshot();
+
+    const { snapshots } = tui.run();
+    expect(snapshots[after]).not.toContain("fakeSignature");
+  });
+
+  it("drops a late signature help reply after definition navigation opens another file", () => {
+    const { trace: tracePath } = startCase(
+      "signature-definition-late",
+      ["--late=textDocument/signatureHelp"],
+      100,
+      [["other.js", "// other file\n"]],
+    );
+
+    tui.type("console.log(");
+    tui.waitFor("FAKE_LATE_PENDING");
+    tui.exec("Go to Definition");
+    tui.waitFor("// other file");
+    tui.waitFor("FAKE_LATE_SENT");
+    tui.elapse(300);
+    const after = tui.snapshot();
+
+    const { snapshots } = tui.run();
+    const trace = readTrace(tracePath);
+    const signatures = messagesFor(trace, "textDocument/signatureHelp");
+
+    expect(snapshots[after]).not.toContain("fakeSignature");
+    expect(messagesFor(trace, "$/cancelRequest")).toEqual([
+      { jsonrpc: "2.0", method: "$/cancelRequest", params: { id: signatures[0].id } },
+    ]);
+  });
+
   it("uses byte-length framing in both directions for a multibyte dot completion", () => {
     const { file, trace: tracePath } = startCase("string-dot-trigger");
     const typed = '"héllo界".';
