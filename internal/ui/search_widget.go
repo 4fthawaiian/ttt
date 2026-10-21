@@ -930,18 +930,20 @@ func (s *SearchWidget) ReplaceAllFiles() {
 		paths = append(paths, g.FilePath)
 	}
 	// Re-scan without the result-list caps so every match is replaced; the
-	// panel keeps its capped list. A failed scan falls back to what it holds.
+	// panel keeps its capped list. A scan error falls back to what the panel
+	// already holds for every file. A successful scan is authoritative even
+	// for a file it now finds nothing in, so that file is left out instead
+	// of being replayed with its stale matches or counted as replaced.
 	found, err := search.FindAllMatches(context.Background(), s.searchOptions(), paths)
-	if err != nil {
-		found = nil
-	}
 	allMatches := make(map[string][]SearchMatch, len(s.Groups))
 	for _, g := range s.Groups {
-		if full, ok := found[filepath.Clean(g.FilePath)]; ok {
-			allMatches[g.FilePath] = full
+		if err != nil {
+			allMatches[g.FilePath] = g.Matches
 			continue
 		}
-		allMatches[g.FilePath] = g.Matches
+		if fresh := found[filepath.Clean(g.FilePath)]; len(fresh) > 0 {
+			allMatches[g.FilePath] = fresh
+		}
 	}
 	s.OnReplaceAll(allMatches, s.ReplaceInput.Text, s.Options)
 }
