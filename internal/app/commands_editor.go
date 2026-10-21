@@ -8,6 +8,7 @@ import (
 	"github.com/eugenioenko/ttt/internal/command"
 	"github.com/eugenioenko/ttt/internal/core/diff"
 	"github.com/eugenioenko/ttt/internal/ui"
+	"github.com/eugenioenko/ttt/internal/workspace"
 )
 
 func (a *App) OpenFold() {
@@ -198,6 +199,7 @@ func (a *App) showSaveFileAs(onSaved func()) {
 		if path == "" {
 			return
 		}
+		path = a.saveAsPath(path)
 		if saveAsReplaces(initial, path) {
 			a.ShowConfirmDialog(
 				fmt.Sprintf("%s already exists. Replace it?", filepath.Base(path)),
@@ -221,6 +223,19 @@ func (a *App) saveFileAs(path string, onSaved func()) {
 			onSaved()
 		}
 	}
+}
+
+// saveAsPath resolves a relative name against the primary workspace folder:
+// Open Folder does not change the process working directory.
+func (a *App) saveAsPath(input string) string {
+	path := workspace.ExpandPath(input)
+	if filepath.IsAbs(path) || a.Workspace == nil {
+		return path
+	}
+	if base := a.Workspace.Primary(); base != "" {
+		return filepath.Join(base, path)
+	}
+	return path
 }
 
 // saveAsReplaces reports whether saving to path would replace an existing

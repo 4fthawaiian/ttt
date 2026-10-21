@@ -163,3 +163,53 @@ func TestSaveAsHardLinkToCurrentFileAsks(t *testing.T) {
 		t.Fatalf("tab path = %q, want %q", h.app.EditorGroup.ActiveFilePath(), path)
 	}
 }
+
+// openOtherFolder starts the harness from one directory and then switches the
+// workspace to another, the way File > Open Folder does without a chdir.
+func openOtherFolder(t *testing.T) (h *testHarness, launch, folder string) {
+	t.Helper()
+	launch = t.TempDir()
+	t.Chdir(launch)
+	h = newTestHarness(t, 80, 24)
+	h.app.Workspace.Folders = nil
+	h.app.Workspace.AddFolder(t.TempDir())
+	return h, launch, h.app.Workspace.Primary()
+}
+
+func TestSaveAsRelativeNameUsesWorkspaceFolder(t *testing.T) {
+	h, launch, folder := openOtherFolder(t)
+	defer h.stop()
+
+	h.saveAsNewFile("scratch", "note.txt")
+
+	if _, err := os.Stat(filepath.Join(launch, "note.txt")); err == nil {
+		t.Fatal("file was saved in the launch directory")
+	}
+	want := filepath.Join(folder, "note.txt")
+	if got := readFile(t, want); strings.TrimSpace(got) != "scratch" {
+		t.Fatalf("expected the file saved in the workspace folder, got %q", got)
+	}
+	if h.app.EditorGroup.ActiveFilePath() != want {
+		t.Fatalf("tab path = %q, want %q", h.app.EditorGroup.ActiveFilePath(), want)
+	}
+}
+
+func TestSaveAsRelativeNameAsksBeforeReplacingInWorkspaceFolder(t *testing.T) {
+	h, _, folder := openOtherFolder(t)
+	defer h.stop()
+
+	path := filepath.Join(folder, "precious.txt")
+	if err := os.WriteFile(path, []byte("precious\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h.saveAsNewFile("scratch", "precious.txt")
+
+	if len(h.app.Root.Overlays) != 1 {
+		t.Fatalf("expected a confirmation dialog, got %d overlays", len(h.app.Root.Overlays))
+	}
+	h.assertContains("already exists")
+	h.pressKey(tcell.KeyEnter, tcell.ModNone)
+	if got := readFile(t, path); got != "precious\n" {
+		t.Fatalf("Cancel replaced the file: %q", got)
+	}
+}
