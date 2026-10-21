@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eugenioenko/ttt/internal/icons"
+	"github.com/eugenioenko/ttt/internal/search"
 	"github.com/eugenioenko/ttt/internal/term"
 	"github.com/eugenioenko/ttt/internal/textwidth"
 
@@ -25,13 +26,8 @@ type SearchBatch struct {
 	Error  string
 }
 
-type SearchMatch struct {
-	FilePath string
-	LineNum  int
-	ColStart int
-	ColEnd   int
-	LineText string
-}
+// SearchMatch is a ripgrep match produced by the search service.
+type SearchMatch = search.Match
 
 type SearchFileGroup struct {
 	FilePath string
@@ -340,28 +336,7 @@ func (s *SearchWidget) streamFiles(ctx context.Context, gen uint64, groups *[]Se
 	}
 
 	dirs := s.WorkDirs
-	args := []string{"--json", "--max-count=100", "--max-columns=1000"}
-	if s.Options.CaseSensitive {
-		args = append(args, "--case-sensitive")
-	} else {
-		args = append(args, "--smart-case")
-	}
-	if !s.Options.UseRegex {
-		args = append(args, "--fixed-strings")
-	}
-	for _, g := range strings.Split(s.Include.Text, ",") {
-		g = strings.TrimSpace(g)
-		if g != "" {
-			args = append(args, "--glob", g)
-		}
-	}
-	for _, g := range strings.Split(s.Exclude.Text, ",") {
-		g = strings.TrimSpace(g)
-		if g != "" {
-			args = append(args, "--glob", "!"+g)
-		}
-	}
-	args = append(args, "--", s.Input.Text)
+	args := search.BaseArgs(s.searchOptions(), true)
 	args = append(args, dirs...)
 
 	cmd := exec.CommandContext(ctx, "rg", args...)
@@ -385,7 +360,7 @@ func (s *SearchWidget) streamFiles(ctx context.Context, gen uint64, groups *[]Se
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		var msg rgMessage
+		var msg search.RgMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			continue
 		}
@@ -478,28 +453,6 @@ func rgFailure(err error) string {
 		return ""
 	}
 	return "search failed: " + err.Error()
-}
-
-type rgMessage struct {
-	Type string      `json:"type"`
-	Data rgMatchData `json:"data"`
-}
-
-type rgMatchData struct {
-	Path       rgText       `json:"path"`
-	Lines      rgText       `json:"lines"`
-	LineNumber int          `json:"line_number"`
-	Submatches []rgSubmatch `json:"submatches"`
-}
-
-type rgText struct {
-	Text string `json:"text"`
-}
-
-type rgSubmatch struct {
-	Match rgText `json:"match"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
 }
 
 func (s *SearchWidget) CollapseAll() {
@@ -943,7 +896,7 @@ func (s *SearchWidget) replaceInFile(groupIdx int) {
 	}
 	g := s.Groups[groupIdx]
 	if s.OnReplace != nil {
-		s.OnReplace(g.FilePath, g.Matches, s.ReplaceInput.Text, s.Options)
+		s.OnReplace(g.FilePath, s.uncappedMatches([]string{g.FilePath}, g.Matches), s.ReplaceInput.Text, s.Options)
 	}
 }
 
@@ -957,15 +910,57 @@ func (s *SearchWidget) previewFile(groupIdx int) {
 	}
 }
 
+// searchOptions builds the ripgrep scan options for the current search.
+func (s *SearchWidget) searchOptions() search.Options {
+	return search.Options{
+		CaseSensitive: s.Options.CaseSensitive,
+		UseRegex:      s.Options.UseRegex,
+		Include:       s.Include.Text,
+		Exclude:       s.Exclude.Text,
+		Query:         s.Input.Text,
+	}
+}
+
 func (s *SearchWidget) ReplaceAllFiles() {
 	if s.OnReplaceAll == nil {
 		return
 	}
-	allMatches := make(map[string][]SearchMatch)
+	paths := make([]string, 0, len(s.Groups))
 	for _, g := range s.Groups {
+		paths = append(paths, g.FilePath)
+	}
+	// Re-scan without the result-list caps so every match is replaced; the
+	// panel keeps its capped list. A failed scan falls back to what it holds.
+	found, err := search.FindAllMatches(context.Background(), s.searchOptions(), paths)
+	if err != nil {
+		found = nil
+	}
+	allMatches := make(map[string][]SearchMatch, len(s.Groups))
+	for _, g := range s.Groups {
+		if full, ok := found[filepath.Clean(g.FilePath)]; ok {
+			allMatches[g.FilePath] = full
+			continue
+		}
 		allMatches[g.FilePath] = g.Matches
 	}
 	s.OnReplaceAll(allMatches, s.ReplaceInput.Text, s.Options)
+}
+
+// uncappedMatches returns every match rg finds in the given paths, falling back
+// to the panel's capped list when the re-scan cannot run.
+func (s *SearchWidget) uncappedMatches(paths []string, fallback []SearchMatch) []SearchMatch {
+	found, err := search.FindAllMatches(context.Background(), s.searchOptions(), paths)
+	if err != nil {
+		return fallback
+	}
+	var all []SearchMatch
+	for _, p := range paths {
+		all = append(all, found[filepath.Clean(p)]...)
+	}
+	if len(all) == 0 {
+		return fallback
+	}
+	return all
 }
 
 func (s *SearchWidget) activateSelected() {
