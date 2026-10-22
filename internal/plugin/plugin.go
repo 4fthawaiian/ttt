@@ -1,7 +1,10 @@
 package plugin
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -89,8 +92,12 @@ type Plugin struct {
 	Terminal           TerminalAPI
 	SimulateClick      func(x, y int)
 	SimulateDrag       func(x1, y1, x2, y2 int)
-	ScreenshotToFile   func(path string) error
-	DebugDumpToFile    func(path string) error
+	SimulateKeys       func(combo string) error
+	SimulateText       func(text string) error
+	DialRPC            func(ctx context.Context, endpoint string) (io.ReadWriteCloser, error)
+	RunAutomation      func(ctx context.Context, action, args string) (json.RawMessage, error)
+	ScreenText         func() string
+	DebugState         func() (string, error)
 	QuitApp            func()
 	OpenFile           func(path string, line int, readonly bool)
 	OpenDiff           func(title string, oldLines, newLines []string, filePath string, extended bool, diffText string)
@@ -136,6 +143,7 @@ type Plugin struct {
 
 	timers      map[int]func()
 	nextTimerID int
+	rpcConns    map[*rpcConn]struct{}
 }
 
 type CommandInfo struct {
@@ -170,6 +178,8 @@ func (p *Plugin) Init() error {
 	setupSystemModule(p.State, p)
 	setupTerminalModule(p.State, p)
 	setupNetModule(p.State, p)
+	setupRPCModule(p.State, p)
+	setupAutomationModule(p.State, p)
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
@@ -218,6 +228,8 @@ func (p *Plugin) InitFromSource(source string) error {
 	setupSystemModule(p.State, p)
 	setupTerminalModule(p.State, p)
 	setupNetModule(p.State, p)
+	setupRPCModule(p.State, p)
+	setupAutomationModule(p.State, p)
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
@@ -252,6 +264,12 @@ func (p *Plugin) logError(context string, err error) {
 	}
 }
 
+func (p *Plugin) SetPostAsync(post func(*PluginAsyncResult)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.PostAsync = post
+}
+
 func (p *Plugin) SafePostAsync(result *PluginAsyncResult) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -271,6 +289,7 @@ func (p *Plugin) Destroy() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopTimersLocked()
+	p.closeRPCConnsLocked()
 	if p.State != nil {
 		p.State.Close()
 		p.State = nil
@@ -303,8 +322,12 @@ func (p *Plugin) Destroy() {
 	p.Borders = nil
 	p.SimulateClick = nil
 	p.SimulateDrag = nil
-	p.ScreenshotToFile = nil
-	p.DebugDumpToFile = nil
+	p.SimulateKeys = nil
+	p.SimulateText = nil
+	p.DialRPC = nil
+	p.RunAutomation = nil
+	p.ScreenText = nil
+	p.DebugState = nil
 	p.QuitApp = nil
 	p.Notify = nil
 	p.OpenDiff = nil

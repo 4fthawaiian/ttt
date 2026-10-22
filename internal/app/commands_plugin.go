@@ -1,12 +1,15 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/eugenioenko/ttt/internal/command"
@@ -350,32 +353,35 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 	p.ShowPanel = func(area string, focus bool) (bool, error) {
 		return a.ShowPluginPanel(p.Name, area, focus)
 	}
+	state := p.State
+	allowed := func() bool { return p.Enabled && p.State == state && state != nil }
 	p.SimulateClick = func(x, y int) {
 		go func() {
-			a.postPluginInput(tcell.NewEventMouse(x, y, tcell.Button1, tcell.ModNone))
+			a.postPluginInput(allowed, tcell.NewEventMouse(x, y, tcell.Button1, tcell.ModNone))
 			time.Sleep(50 * time.Millisecond)
-			a.postPluginInput(tcell.NewEventMouse(x, y, tcell.ButtonNone, tcell.ModNone))
+			a.postPluginInput(allowed, tcell.NewEventMouse(x, y, tcell.ButtonNone, tcell.ModNone))
 		}()
 	}
 	p.SimulateDrag = func(x1, y1, x2, y2 int) {
 		go func() {
-			a.postPluginInput(tcell.NewEventMouse(x1, y1, tcell.Button1, tcell.ModNone))
+			a.postPluginInput(allowed, tcell.NewEventMouse(x1, y1, tcell.Button1, tcell.ModNone))
 			time.Sleep(30 * time.Millisecond)
 			steps := 10
 			for i := 1; i <= steps; i++ {
 				mx := x1 + (x2-x1)*i/steps
 				my := y1 + (y2-y1)*i/steps
-				a.postPluginInput(tcell.NewEventMouse(mx, my, tcell.Button1, tcell.ModNone))
+				a.postPluginInput(allowed, tcell.NewEventMouse(mx, my, tcell.Button1, tcell.ModNone))
 				time.Sleep(15 * time.Millisecond)
 			}
-			a.postPluginInput(tcell.NewEventMouse(x2, y2, tcell.ButtonNone, tcell.ModNone))
+			a.postPluginInput(allowed, tcell.NewEventMouse(x2, y2, tcell.ButtonNone, tcell.ModNone))
 		}()
 	}
-	p.ScreenshotToFile = func(path string) error {
-		return a.DumpScreenshot(path)
-	}
-	p.DebugDumpToFile = func(path string) error {
-		return a.DumpDebugState(path)
+	p.SimulateKeys = func(combo string) error { return a.simulatePluginKeys(combo, allowed) }
+	p.SimulateText = func(text string) error { return a.simulatePluginText(text, allowed) }
+	p.ScreenText = a.Screenshot
+	p.DebugState = func() (string, error) {
+		data, err := json.MarshalIndent(a.BuildDebugState(), "", "  ")
+		return string(data), err
 	}
 	p.QuitApp = func() {
 		if a.Running != nil {
@@ -475,9 +481,9 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 		}
 		return result
 	}
-	p.PostAsync = func(result *plugin.PluginAsyncResult) {
+	p.SetPostAsync(func(result *plugin.PluginAsyncResult) {
 		a.Screen.PostEvent(tcell.NewEventInterrupt(result))
-	}
+	})
 	pluginSource := "plugin:" + p.Name
 	p.PublishDiagnostics = func(path string, items []plugin.DiagnosticItem) {
 		diags := make([]ui.Diagnostic, 0, len(items))
@@ -579,6 +585,10 @@ func (a *App) WirePlugin(p *plugin.Plugin) {
 		a.postRepositoryInvalidation(path, RepositoryWorktree)
 	}
 	p.Filesystem = fs
+	p.DialRPC = dialPluginRPC(fs.vars)
+	p.RunAutomation = func(ctx context.Context, action, args string) (json.RawMessage, error) {
+		return a.runPluginAutomation(ctx, p, action, args)
+	}
 	p.System = NewPluginSystemAPI()
 	p.Terminal = NewPluginTerminalAPI(a)
 	if system, ok := p.System.(*PluginSystemAPI); ok {
@@ -1161,11 +1171,57 @@ func closePluginPanel(w ui.Widget) {
 // pluginInput is input a plugin synthesized. The event loop drops it while a
 // plugin approval dialog is open, so no plugin can grant permissions.
 type pluginInput struct {
-	Event tcell.Event
+	Events    []tcell.Event
+	Lifecycle *execRequestLifecycle
+	Allowed   func() bool
 }
 
-func (a *App) postPluginInput(ev tcell.Event) {
-	a.Screen.PostEvent(tcell.NewEventInterrupt(&pluginInput{Event: ev}))
+// postPluginInput sends events as one interrupt: PostEvent falls back to a
+// goroutine when the queue is full, which would reorder separate posts.
+func (a *App) postPluginInput(allowed func() bool, events ...tcell.Event) {
+	a.Screen.PostEvent(tcell.NewEventInterrupt(&pluginInput{Events: events, Allowed: allowed}))
+}
+
+func (a *App) simulatePluginKeys(combo string, allowed func() bool) error {
+	steps, err := config.ParseKeyString(combo)
+	if err != nil {
+		return err
+	}
+	events := make([]tcell.Event, 0, len(steps))
+	for _, step := range steps {
+		key, mod, ch := comboToTcell(step)
+		events = append(events, tcell.NewEventKey(key, keyEventStr(ch), mod))
+	}
+	a.postPluginInput(allowed, events...)
+	return nil
+}
+
+const maxPluginTypeBytes = 64 << 10
+
+func pluginTextEvents(text string) ([]tcell.Event, error) {
+	if len(text) > maxPluginTypeBytes {
+		return nil, fmt.Errorf("type input exceeds %d bytes; use automation paste for bulk text", maxPluginTypeBytes)
+	}
+	var events []tcell.Event
+	for _, r := range strings.ReplaceAll(text, "\r\n", "\n") {
+		if r == '\n' {
+			events = append(events, tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone))
+		} else {
+			events = append(events, tcell.NewEventKey(tcell.KeyRune, string(r), tcell.ModNone))
+		}
+	}
+	return events, nil
+}
+
+func (a *App) simulatePluginText(text string, allowed func() bool) error {
+	events, err := pluginTextEvents(text)
+	if err != nil {
+		return err
+	}
+	if len(events) > 0 {
+		a.postPluginInput(allowed, events...)
+	}
+	return nil
 }
 
 func (a *App) acceptsPluginInput() bool {

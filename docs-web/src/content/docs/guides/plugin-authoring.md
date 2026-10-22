@@ -941,15 +941,21 @@ local lines = ttt.markdown("# Hello\nSome **bold** text")
 
 ### Debug helpers
 
-These drive and capture the editor for automated testing (see [Testing Plugins](/guides/plugin-testing/)). They are the Lua equivalents of the `--exec` script commands. No permission required.
+These drive and capture the editor for automated testing (see [Testing Plugins](/guides/plugin-testing/)). They are the Lua equivalents of the `--exec` script commands.
 
-| Function | Description |
-|----------|-------------|
-| `ttt.screenshot(path)` | Write the current screen (plain text) to a file. |
-| `ttt.debug(path)` | Write the editor's full state as JSON to a file (cursor, panels, widget tree, OUTPUT log). |
-| `ttt.click(x, y)` | Simulate a mouse click at screen coordinates. |
-| `ttt.drag(x1, y1, x2, y2)` | Simulate a mouse drag between two points. |
-| `ttt.quit()` | Exit the editor. |
+| Function | Permission | Description |
+|----------|------------|-------------|
+| `ttt.screenshot([path])` | `screen.read` | Return the current screen as plain text, or write it to `path` (also needs `fs.write` covering `path`). |
+| `ttt.debug([path])` | `screen.read`, `editor.read`, `terminal.read` | Return the editor's full state as JSON (cursor, buffer, panels, widget tree, OUTPUT log, terminal history), or write it to `path` (also needs `fs.write`). |
+| `ttt.click(x, y)` | `input` | Simulate a mouse click at screen coordinates. |
+| `ttt.drag(x1, y1, x2, y2)` | `input` | Simulate a mouse drag between two points. |
+| `ttt.key(combo)` | `input` | Press a key combo or chord, written as in keybindings (`"ctrl+s"`, `"ctrl+k ctrl+s"`). Raises an error for an unknown key. |
+| `ttt.type(text)` | `input` | Type text as individual key presses. LF, CRLF and CR produce Enter; CRLF produces one Enter. Other control characters follow key handling. Raises an error above 64 KiB of UTF-8 input; use automation `paste` for bulk text. |
+| `ttt.quit()` | none | Exit the editor. |
+
+Events within a key or text call are queued as one batch and handled in order after the current callback returns. Mouse clicks and drags run asynchronously and can interleave with, or arrive after, later keyboard input. When a click must finish before typing, chain acknowledged automation actions through their callbacks. Queued input is dropped if its originating plugin is disabled, unloaded or reloaded, or while a plugin approval dialog is open, so no plugin can grant permissions on the user's behalf.
+
+These calls do not report when the input has been applied. When you need to know, for example to read the screen after a key press, use [`ttt.automation`](#automation-api) instead.
 
 ### `ttt.json` Module
 
@@ -2486,6 +2492,107 @@ net.post_async("https://api.example.com/data", {
 end)
 ```
 
+## RPC API
+
+The `ttt.rpc` module opens a persistent JSON-RPC 2.0 connection to another process, framed with `Content-Length` headers like the Language Server Protocol. Either side can send requests and notifications, so a companion process can drive the editor through your plugin: open files, read the screen, type, or click. Requires the `network.rpc` permission.
+
+```lua
+local rpc = require("ttt.rpc")
+```
+
+The plugin always dials out; it cannot listen. The process on the other end is usually started by something else, such as an agent, a daemon, or a tool the user runs.
+
+### RPC endpoint scoping
+
+`network.rpc` lists the endpoints the plugin may connect to:
+
+```json
+"network.rpc": ["127.0.0.1:4250", "unix:~/.cache/my-hub.sock"]
+```
+
+An entry is a host or IP with a required port, or `unix:` followed by a socket path that is absolute or starts with `~` or `{config}`. `rpc.connect` must name a listed endpoint. The approval dialog shows each endpoint, because a process there can make the plugin act with every other permission it holds.
+
+### `rpc.connect(endpoint, opts, callback)`
+
+Connects in the background and calls `callback(conn, err)` on the main thread: `conn` on success, or `nil` and an error message.
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `on_request` | function | `(method, params)` for a request from the peer. Its return value is the result; raising an error sends an error reply. Without it, requests get method-not-found. |
+| `on_notification` | function | `(method, params)` for a notification from the peer. |
+| `on_close` | function | `(err)` when the connection ends: `nil` when either side closed it normally, otherwise the error. |
+
+Params and results convert between JSON and Lua values as `ttt.json` does. Callbacks run on the main thread; peer request and notification handlers run in the order their messages arrived. Replies can arrive in a different order and are matched by request ID. Incoming message bodies are limited to 32 MiB and headers to 8 KiB; exceeding either limit closes the connection.
+
+### Connection methods
+
+| Method | Description |
+|--------|-------------|
+| `conn:request(method, params, [callback])` | Send a request. `callback(result, err)` receives the result, or `nil` and the peer's error message. |
+| `conn:notify(method, params)` | Queue a notification without waiting for the peer to read it. Returns `true` when accepted, or `false` and an error message when closed or the queue is full. A full queue leaves the connection open so the plugin can retry later. |
+| `conn:close()` | Close the connection. Connections also close when the plugin unloads. |
+
+Outbound frames share an ordered queue capped at 64 frames and 32 MiB, including the frame being written. A full queue rejects a notification or outgoing request; requests report the error through their callback. A reply that cannot be queued, a failed write, or a write taking longer than 10 seconds closes the connection and reports the failure through `on_close`.
+
+Incoming callbacks are limited to 256 pending messages and 32 MiB of retained message data per connection, including callbacks currently being delivered. Exceeding either limit closes the connection with an incoming-queue error. Closing a connection or unloading its plugin discards queued messages. The connect and close callbacks are delivered separately from this budget.
+
+```lua
+local rpc = require("ttt.rpc")
+
+rpc.connect("unix:~/.cache/my-hub.sock", {
+  on_request = function(method, params)
+    if method == "editor/open" then
+      ttt.open_file(params.path, params.line)
+      return { ok = true }
+    end
+    error("unknown method " .. method)
+  end,
+  on_close = function(err)
+    ttt.log("info", "hub disconnected " .. tostring(err))
+  end,
+}, function(conn, err)
+  if not conn then
+    ttt.log("error", "hub unavailable: " .. err)
+    return
+  end
+  conn:notify("hello", { version = ttt.version() })
+end)
+```
+
+## Automation API
+
+`ttt.automation` provides acknowledged actions for companion processes, such as an agent driving the editor over [`ttt.rpc`](#rpc-api). Use it when you need to know an action has been applied before doing the next thing; for input that does not need confirmation, `ttt.key`, `ttt.type`, `ttt.click` and `ttt.drag` are simpler and send their events in one batch. Call `automation.run(action, args, callback)` on the UI thread. It returns a cancellation function; `callback(result, err)` runs on the main thread after the action has been handled and redrawn. Unloading the plugin cancels outstanding automation. Already-applied changes remain available to normal undo.
+
+```lua
+local automation = require("ttt.automation")
+local cancel = automation.run("paste", "hello\nworld", function(result, err)
+  if err then ttt.log("error", err) end
+end)
+```
+
+| Action | Permission | Arguments / result |
+|--------|------------|--------------------|
+| `session` | `editor.read` | No arguments; returns PID, workspace paths, active file and ttt version. |
+| `buffer` | `editor.read` | No arguments; returns path, complete text and one-based cursor. |
+| `screenshot` | `screen.read` | No arguments; returns the screen text. |
+| `debug` | `screen.read`, `editor.read`, `terminal.read` | No arguments; returns the structured debug state, which includes buffer text and terminal history. |
+| `commands` | `commands` | No arguments; returns command IDs and titles. |
+| `command`, `exec` | `commands` | Command ID or exact command title. |
+| `open` | `commands` | JSON object string with `path`, optional one-based `line` and `readonly`. |
+| `panel`, `copy` | `commands` | Bottom panel ID, or no arguments for copy. |
+| `clipboard` | `clipboard.read` | No arguments; returns clipboard text. |
+| `click`, `rclick`, `hover` | `input` | `x y`, in zero-based screen cells. |
+| `drag` | `input` | `x1 y1 x2 y2`. |
+| `scroll` | `input` | `x y signed-count`, positive down; maximum magnitude 1000. |
+| `key` | `input` | Key combination or chord, as in keybindings. |
+| `type`, `paste` | `input` | Text input. Type sends individual key presses, mapping LF, CRLF and CR to Enter (one Enter per CRLF); other control characters follow key handling. Paste inserts literal text through the editor's undoable paste path. |
+| `wait` | `input` | Milliseconds, at most 30000. |
+| `wait-for` | `screen.read` | Screen text and optional `timeout=MS`, as in `--exec`; at most 30000 ms, default 5000. |
+
+The `type` action rejects input above 64 KiB of UTF-8 text through its callback, before applying any input. Use `paste` for larger text.
+
+Call `cancel()` to stop waiting and prevent queued events from applying. Claimed events finish handling before cancellation returns through the callback. Actions fail while plugin permission approvals are pending; synthesized input cannot approve permissions. Commands may start external work that continues after their acknowledgment; use `wait-for` or inspect state to observe its completion.
+
 ## Events API
 
 The `ttt.events` module lets plugins react to editor lifecycle events.
@@ -2792,13 +2899,16 @@ Permissions are declared in the manifest's `permissions` object. Boolean permiss
 | `system.env`     | boolean  | Read environment variables (`ttt.system.env`).    |
 | `terminal.control` | boolean | Spawn terminal tabs, send text, focus tabs, and close tabs (`ttt.terminal`). Not constrained by `system.exec` or `fs.*`. |
 | `terminal.read`  | boolean  | Read raw PTY output and visible screen text, and list open terminals (`ttt.terminal`). Accesses any tab, including user tabs. |
+| `network.rpc`    | string[] | Open RPC connections to the listed endpoints (`ttt.rpc`). See [RPC endpoint scoping](#rpc-endpoint-scoping). |
 | `network.http`   | boolean \| string[] | Make outbound HTTP requests (`ttt.net`). `true` allows any destination, local services included; an array (`["api.github.com", "127.0.0.1:4250"]`) restricts requests to those hosts or IPs, each with an optional port. See [Network host scoping](#network-host-scoping). |
 | `events.file`    | boolean  | Listen for file events: `file.open`, `file.close`, `file.save`. |
 | `events.editor`  | boolean  | Listen for editor events: `editor.change`, `cursor.change`, `tab.change`. |
 | `settings`       | boolean  | Read/write editor settings (`ttt.settings`).      |
 | `settings_keys`  | string[] | Allowed settings key patterns. Use `group.*` for prefix match or exact key. |
 | `storage`        | boolean  | Persist private plugin data (`ttt.storage`).      |
-| `clipboard.read` | boolean  | Read the system clipboard (`ttt.clipboard_read`). | 
+| `clipboard.read` | boolean  | Read the system clipboard (`ttt.clipboard_read`). |
+| `input`          | boolean  | Simulate mouse and keyboard input (`ttt.click`, `ttt.drag`, `ttt.key`, `ttt.type`). |
+| `screen.read`    | boolean  | Capture the rendered screen (`ttt.screenshot`) and, with `editor.read` and `terminal.read`, the editor state (`ttt.debug`). |
 
 **Example with multiple permissions:**
 

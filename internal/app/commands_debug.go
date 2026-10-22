@@ -142,10 +142,15 @@ func (a *App) debugRunPlugin() {
 			FsWrite:           plugin.FsAccess{Paths: []string{plugin.FsAnyPath}},
 			SystemEnv:         true,
 			NetworkHTTP:       plugin.NetworkHTTP{All: true},
+			NetworkRPC:        plugin.NetworkRPC{All: true},
 			EventsFile:        true,
 			EventsEditor:      true,
 			Storage:           true,
 			ClipboardRead:     true,
+			Input:             true,
+			ScreenRead:        true,
+			TerminalControl:   true,
+			TerminalRead:      true,
 		},
 	}
 
@@ -263,12 +268,17 @@ func LoadPluginFromFile(a *App, path string) {
 			FsWrite:           plugin.FsAccess{Paths: []string{plugin.FsAnyPath}},
 			SystemEnv:         true,
 			NetworkHTTP:       plugin.NetworkHTTP{All: true},
+			NetworkRPC:        plugin.NetworkRPC{All: true},
 			EventsFile:        true,
 			EventsEditor:      true,
 			Storage:           true,
 			Settings:          true,
 			SettingsKeys:      []string{"*"},
 			ClipboardRead:     true,
+			Input:             true,
+			ScreenRead:        true,
+			TerminalControl:   true,
+			TerminalRead:      true,
 		},
 	}
 
