@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"github.com/eugenioenko/ttt/internal/term"
+	"github.com/eugenioenko/ttt/internal/textwidth"
 	"github.com/gdamore/tcell/v3"
 )
 
@@ -24,20 +25,20 @@ func (kv *KeyValueListWidget) Height() int { return len(kv.Entries) + kv.BoxOver
 func (kv *KeyValueListWidget) Width() int  { return 0 }
 
 func (kv *KeyValueListWidget) ScrollSize() (int, int) {
-	w := 0
-	for _, e := range kv.Entries {
-		row := len([]rune(e.Key)) + 4 + len([]rune(e.Value))
-		if row > w {
-			w = row
-		}
+	if len(kv.Entries) == 0 {
+		return 0, 0
 	}
-	return w, len(kv.Entries)
+	valueW := 0
+	for _, e := range kv.Entries {
+		valueW = max(valueW, textwidth.String(e.Value))
+	}
+	return kv.keyColWidth() + 2 + valueW, len(kv.Entries)
 }
 
 func (kv *KeyValueListWidget) keyColWidth() int {
 	w := 0
 	for _, e := range kv.Entries {
-		if n := len([]rune(e.Key)); n > w {
+		if n := textwidth.String(e.Key); n > w {
 			w = n
 		}
 	}
@@ -67,8 +68,7 @@ func (kv *KeyValueListWidget) Render(surface Surface) {
 		}
 		entry := kv.Entries[y]
 
-		keyRunes := []rune(entry.Key)
-		kx := keyColW - len(keyRunes)
+		kx := keyColW - textwidth.String(entry.Key)
 		if kx < 0 {
 			kx = 0
 		}
