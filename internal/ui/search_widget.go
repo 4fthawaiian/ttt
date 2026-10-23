@@ -895,8 +895,12 @@ func (s *SearchWidget) replaceInFile(groupIdx int) {
 		return
 	}
 	g := s.Groups[groupIdx]
+	matches := s.uncappedMatches([]string{g.FilePath}, g.Matches)
+	if len(matches) == 0 {
+		return
+	}
 	if s.OnReplace != nil {
-		s.OnReplace(g.FilePath, s.uncappedMatches([]string{g.FilePath}, g.Matches), s.ReplaceInput.Text, s.Options)
+		s.OnReplace(g.FilePath, matches, s.ReplaceInput.Text, s.Options)
 	}
 }
 
@@ -934,10 +938,11 @@ func (s *SearchWidget) ReplaceAllFiles() {
 	// already holds for every file. A successful scan is authoritative even
 	// for a file it now finds nothing in, so that file is left out instead
 	// of being replayed with its stale matches or counted as replaced.
-	found, err := search.FindAllMatches(context.Background(), s.searchOptions(), paths)
+	opts := s.searchOptions()
+	found, err := search.FindAllMatches(context.Background(), opts, paths)
 	allMatches := make(map[string][]SearchMatch, len(s.Groups))
 	for _, g := range s.Groups {
-		if err != nil {
+		if err != nil || opts.Query == "" {
 			allMatches[g.FilePath] = g.Matches
 			continue
 		}
@@ -951,16 +956,17 @@ func (s *SearchWidget) ReplaceAllFiles() {
 // uncappedMatches returns every match rg finds in the given paths, falling back
 // to the panel's capped list when the re-scan cannot run.
 func (s *SearchWidget) uncappedMatches(paths []string, fallback []SearchMatch) []SearchMatch {
-	found, err := search.FindAllMatches(context.Background(), s.searchOptions(), paths)
+	opts := s.searchOptions()
+	if opts.Query == "" {
+		return fallback
+	}
+	found, err := search.FindAllMatches(context.Background(), opts, paths)
 	if err != nil {
 		return fallback
 	}
 	var all []SearchMatch
 	for _, p := range paths {
 		all = append(all, found[filepath.Clean(p)]...)
-	}
-	if len(all) == 0 {
-		return fallback
 	}
 	return all
 }
