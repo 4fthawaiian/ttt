@@ -63,6 +63,11 @@ type App struct {
 	Search        *ui.SearchWidget
 	MenuBar       *ui.MenuBarWidget
 	RootBox       *widgets.VStackWidget
+	MainGrid      *widgets.GridWidget
+	gridPool      map[string]widgets.Widget
+	dockViews     map[string]*dockView
+	dockViewOrder []string
+	layoutSeq     int
 	StatusBar     *ui.StatusBarWidget
 	Status        *view.StatusBar
 	Borders       *term.BorderSet
@@ -423,7 +428,9 @@ func (a *App) SpawnTerminal() {
 func (a *App) SpawnTerminalSpec(spec TerminalSpec) (string, error) {
 	r := a.ContentSplit.GetRect()
 	var cols, rows int
-	if a.ContentSplit.Position == ui.SplitRight {
+	if tr := a.TerminalPanel.GetRect(); a.MainGrid != nil && tr.W > 0 {
+		cols, rows = tr.W-terminalStripWidth, tr.H
+	} else if a.ContentSplit.Position == ui.SplitRight {
 		panelW := a.ContentSplit.RightW
 		if panelW <= 1 {
 			panelW = min(r.W/2, r.W-4)
@@ -728,6 +735,7 @@ func (a *App) Init(screen *term.TcellScreen, renderer *render.Renderer, lspManag
 		screen.PostEvent(tcell.NewEventInterrupt(&highlightStep{}))
 	})
 	a.StartWatcher()
+	a.startGridTerminal()
 
 	if a.Changes != nil {
 		a.Changes.Screen = screen
@@ -1164,6 +1172,11 @@ func (a *App) ShowSelectDialog(title string, items []widgets.SelectItem, onSelec
 // pointerShapeAt runs after routing so a drag that just ended already reads as
 // ended, and it sees every motion event, which the dividers' own handlers do not.
 func (a *App) pointerShapeAt(mx, my int) string {
+	if a.MainGrid != nil {
+		if shape := a.MainGrid.PointerShape(mx, my); shape != "" {
+			return shape
+		}
+	}
 	switch {
 	case a.ContentSplit.Dragging():
 		return a.ContentSplit.ResizeShape()

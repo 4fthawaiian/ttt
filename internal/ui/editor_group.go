@@ -2857,3 +2857,7 @@ func (g *EditorGroupWidget) HandleEvent(ev tcell.Event) EventResult {
 	g.saveMultiState()
 	return result
 }
+
+func (g *EditorGroupWidget) TopEdgeRow() int {
+	return g.GetRect().Y + 2
+}

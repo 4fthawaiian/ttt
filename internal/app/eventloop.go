@@ -453,6 +453,9 @@ func resizeTerminals(app *App) {
 	r := app.BottomPanel.GetRect()
 	cols := r.W - terminalStripWidth
 	rows := r.H - 2
+	if tr := app.TerminalPanel.GetRect(); app.MainGrid != nil {
+		cols, rows = tr.W-terminalStripWidth, tr.H
+	}
 	if cols <= 0 || rows <= 0 {
 		return
 	}

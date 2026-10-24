@@ -67,6 +67,8 @@ var menuBarMenus = [][]ui.ContextMenuItem{
 		{Label: "Toggle Terminal", Command: "terminal.toggle"},
 		{Label: "New Terminal", Command: "terminal.new"},
 		ui.MenuSep(),
+		{Label: "Workspace Editor", Command: "layout.workspaceEditor"},
+		ui.MenuSep(),
 		{Label: "Theme", Command: "theme.switch"},
 		{Label: "Keybindings", Command: "view.keybindings"},
 		{Label: "Settings", Command: "settings.openUI"},
@@ -310,14 +312,12 @@ func openMenuBarDropdown(app *App, index int) {
 }
 
 func handleRightClick(app *App, mx, my int) {
-	panelRect := app.SplitPanel.GetRect()
-	if my < panelRect.Y || my >= panelRect.Y+panelRect.H {
+	if !app.gridContains(app.MainGrid, mx, my) {
 		return
 	}
 
 	if app.Sidebar.Visible {
-		divX := app.SplitPanel.DividerScreenX()
-		if mx < divX {
+		if app.gridContains(app.Sidebar, mx, my) {
 			sidebarR := app.Sidebar.GetRect()
 			if my > sidebarR.Y+1 {
 				ev := tcell.NewEventMouse(mx, my, tcell.Button2, 0)
@@ -340,8 +340,7 @@ func handleRightClick(app *App, mx, my int) {
 	}
 
 	if app.ContentSplit != nil && app.ContentSplit.ShowBottom {
-		divY := app.ContentSplit.DividerScreenY()
-		if divY >= 0 && my > divY {
+		if app.gridContains(app.BottomPanel, mx, my) {
 			if app.BottomPanel != nil && app.BottomPanel.ActivePanel == "terminal" {
 				if app.TerminalPanel != nil {
 					app.Root.SetFocus(app.TerminalPanel)

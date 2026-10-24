@@ -843,6 +843,8 @@ func registerWidgetCallbacks(app *App) {
 	app.ContentSplit.OnResize = app.resizePanel
 	app.ContentSplit.OnResizeEnd = app.finishPanelResize
 
+	app.MainGrid.OnChildClick = app.onGridChildClick
+
 	app.ContentSplit.OnTopClick = func() {
 		if app.Root.HasOverlay() {
 			return

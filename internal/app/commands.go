@@ -10,6 +10,7 @@ import (
 
 func RegisterCommands(app *App) {
 	registerViewCommands(app)
+	registerGridCommands(app)
 	registerEditorCommands(app)
 	registerSearchCommands(app)
 	registerPaletteCommands(app)

@@ -154,3 +154,11 @@ func (s *SidebarWidget) HandleEvent(ev tcell.Event) EventResult {
 	}
 	return EventIgnored
 }
+
+func (s *SidebarWidget) EdgeLineRows() []int {
+	r := s.GetRect()
+	if !s.Visible || r.H <= 2 {
+		return nil
+	}
+	return []int{r.Y + 1}
+}

@@ -363,7 +363,14 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 		return sidebar.Visible && splitPanel.ShowLeft && r.W > 0 && r.H > 2
 	}
 
-	rootBox := widgets.NewVStackWidget(menuBar, splitPanel, statusBar)
+	sidebar.Visible = true
+	splitPanel.ShowLeft = true
+	mainGrid, gridPool := buildMainGrid(editorGroup, sidebar, bottomPanel, borders)
+	editorGroup.TabBar.PointerInteractionValid = func() bool {
+		return editorGroup.GetRect().H > 3
+	}
+
+	rootBox := widgets.NewVStackWidget(menuBar, mainGrid)
 
 	root := ui.NewRoot(rootBox)
 	root.SetFocus(editorGroup)
@@ -371,6 +378,8 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 	app := &App{
 		Root:                root,
 		RootBox:             rootBox,
+		MainGrid:            mainGrid,
+		gridPool:            gridPool,
 		EditorGroup:         editorGroup,
 		Sidebar:             sidebar,
 		SplitPanel:          splitPanel,

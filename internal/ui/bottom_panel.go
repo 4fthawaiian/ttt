@@ -90,3 +90,18 @@ func (bp *BottomPanelWidget) HandleEvent(ev tcell.Event) EventResult {
 	}
 	return EventIgnored
 }
+
+func (bp *BottomPanelWidget) EdgeLineRows() []int {
+	r := bp.GetRect()
+	if r.H < 3 {
+		return nil
+	}
+	return []int{r.Y + 1}
+}
+
+func (bp *BottomPanelWidget) BottomEdgeCols() []int {
+	if divider, ok := bp.ActiveWidget().(dividerXProvider); ok {
+		return []int{divider.DividerScreenX()}
+	}
+	return nil
+}

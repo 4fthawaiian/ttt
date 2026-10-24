@@ -15,11 +15,11 @@ func (a *App) applyMenuBarVisibility(visible bool) {
 	}
 	a.MenuBar.Visible = visible
 	if visible {
-		a.RootBox.Children = []widgets.Widget{a.MenuBar, a.SplitPanel, a.StatusBar}
+		a.RootBox.Children = []widgets.Widget{a.MenuBar, a.MainGrid}
 		return
 	}
 	a.MenuBar.Selected = -1
-	a.RootBox.Children = []widgets.Widget{a.SplitPanel, a.StatusBar}
+	a.RootBox.Children = []widgets.Widget{a.MainGrid}
 	if a.Root != nil && a.Root.Focused == a.MenuBar {
 		a.Root.SetFocus(a.EditorGroup)
 	}
