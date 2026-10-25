@@ -123,6 +123,7 @@ func updateWidget(w widgets.Widget, desc WidgetDesc, p *Plugin) {
 	case WidgetKeyValue:
 		if kv, ok := w.(*widgets.KeyValueListWidget); ok {
 			kv.Entries = desc.KeyValueEntries
+			kv.InvertStyles = desc.KeyValueMuted
 			applyBoxModel(&kv.Box, desc)
 		}
 	case WidgetTree, WidgetList:
@@ -434,6 +435,7 @@ func wireTitleMenu(config *widgets.TitleConfig, desc WidgetDesc, p *Plugin) {
 
 func createKeyValueWidget(desc WidgetDesc) *widgets.KeyValueListWidget {
 	kv := widgets.NewKeyValueListWidget(desc.KeyValueEntries)
+	kv.InvertStyles = desc.KeyValueMuted
 	applyBoxModel(&kv.Box, desc)
 	return kv
 }

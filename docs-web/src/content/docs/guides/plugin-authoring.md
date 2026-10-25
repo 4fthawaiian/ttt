@@ -1144,7 +1144,7 @@ The argument is an array of tables, each with:
 | `key`   | string | yes      | Left column.  |
 | `value` | string | yes      | Right column. |
 
-The outer table also supports [box model fields](#box-model) for margin/padding.
+The outer table also supports [box model fields](#box-model) for margin/padding, and `muted_keys = true`, which swaps the emphasis: keys muted and values in the regular item style, like ttt's own details dialogs. Use it for a details view where the values are what matters. By default the keys stand out and the values are muted.
 
 Key-value lists are not focusable.
 
