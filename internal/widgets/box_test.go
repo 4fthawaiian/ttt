@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/eugenioenko/ttt/internal/term"
@@ -325,5 +326,25 @@ func TestBoxDoubleBorder(t *testing.T) {
 	}
 	if s.cells[0][5].Ch != borders.Horizontal {
 		t.Errorf("expected double horizontal %c, got %c", borders.Horizontal, s.cells[0][5].Ch)
+	}
+}
+
+func TestBoxTitleSitsInTopBorder(t *testing.T) {
+	box := NewBoxWithBorder(term.SingleBorderSet())
+	box.Title = "Name"
+	box.Child = NewLabelWidget(LabelConfig{Text: "x"})
+	s := renderWidget(box, 0, 0, 20, 3)
+	if got := rowText(s, 0); !strings.HasPrefix(got, "┌ Name ─") {
+		t.Fatalf("top border = %q", got)
+	}
+}
+
+func TestBoxTitleClipsBeforeTheCorner(t *testing.T) {
+	box := NewBoxWithBorder(term.SingleBorderSet())
+	box.Title = "A very long title"
+	s := renderWidget(box, 0, 0, 10, 3)
+	got := []rune(rowText(s, 0))
+	if got[0] != '┌' || got[len(got)-1] != '┐' || !strings.HasPrefix(string(got), "┌ A very") {
+		t.Fatalf("top border = %q, want the clipped title between the corners", string(got))
 	}
 }
