@@ -1725,3 +1725,56 @@ func TestTreeRevealIDScrollsBackToUnchangedSelection(t *testing.T) {
 		t.Error("RevealID returned true for an unknown id")
 	}
 }
+
+func TestTreeBadgeRightAndInset(t *testing.T) {
+	tree := NewTreeWidget(TreeConfig{
+		Items:      []*TreeNode{{ID: "a", Label: "Namespaces", Badge: "71"}},
+		BadgeRight: true,
+		Inset:      1,
+	})
+	tree.SetFocused(true)
+	s := renderWidget(tree, 0, 0, 20, 2)
+	got := rowText(s, 0)
+	if want := " Namespaces      71"; got != want {
+		t.Fatalf("row = %q, want %q", got, want)
+	}
+	for x, cell := range s.cells[0] {
+		if cell.Style != term.StyleSidebarSelected {
+			t.Errorf("selected row cell %d has style %v, want the full-width highlight", x, cell.Style)
+		}
+	}
+}
+
+func TestTreeRightBadgeKeepsAGapBeforeActions(t *testing.T) {
+	tree := NewTreeWidget(TreeConfig{
+		Items:      []*TreeNode{{ID: "a", Label: "Namespaces", Badge: "71", Actions: []Action{{Icon: "+"}}}},
+		BadgeRight: true,
+	})
+	s := renderWidget(tree, 0, 0, 20, 2)
+	if got := rowText(s, 0); !strings.Contains(got, "71 +") {
+		t.Fatalf("row = %q, want a space between the badge and the action", got)
+	}
+}
+
+func TestTreeRightBadgeNeverCoversTheRowContent(t *testing.T) {
+	tree := NewTreeWidget(TreeConfig{
+		Items:      []*TreeNode{{ID: "a", Label: "Namespaces", Badge: "71", Expandable: true}},
+		BadgeRight: true,
+		Inset:      4,
+	})
+	s := renderWidget(tree, 0, 0, 8, 1)
+	if got, want := rowText(s, 0), "    ▸"; got != want {
+		t.Fatalf("row = %q, want %q: the chevron kept and the badge dropped", got, want)
+	}
+}
+
+func TestTreeRightBadgeLeavesOneGapAfterTheLabel(t *testing.T) {
+	tree := NewTreeWidget(TreeConfig{
+		Items:      []*TreeNode{{ID: "a", Label: "ab", Badge: "7"}},
+		BadgeRight: true,
+	})
+	s := renderWidget(tree, 0, 0, 5, 1)
+	if got, want := rowText(s, 0), "ab 7"; got != want {
+		t.Fatalf("row = %q, want %q", got, want)
+	}
+}
