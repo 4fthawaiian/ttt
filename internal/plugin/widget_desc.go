@@ -139,6 +139,7 @@ type WidgetDesc struct {
 	BorderLeft   bool
 	BorderRight  bool
 	FixedHeight  int
+	Align        string
 	FixedWidth   int
 	Gap          int
 
