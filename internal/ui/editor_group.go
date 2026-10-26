@@ -972,6 +972,7 @@ func (g *EditorGroupWidget) ClosePluginTab(key string) bool {
 	if key == "" {
 		return false
 	}
+	prev := g.activeContent()
 	for i, t := range g.tabs {
 		if t.PluginKey == key {
 			g.notifyContentTabClose(t)
@@ -990,6 +991,7 @@ func (g *EditorGroupWidget) ClosePluginTab(key string) bool {
 				g.active = len(g.tabs) - 1
 			}
 			g.syncTabs()
+			g.refocusAfterClose(prev)
 			if emptied {
 				g.notifyEmpty()
 			}
@@ -1298,14 +1300,35 @@ func (g *EditorGroupWidget) SwitchTab(idx int) {
 		g.saveMultiState()
 		g.active = idx
 		g.syncTabs()
-		if g.focused {
-			if t := g.activeTab(); t != nil && t.Content != nil {
-				if setter, ok := t.Content.(interface{ SetFocused(bool) }); ok {
-					setter.SetFocused(true)
-				}
-			}
+		g.focusActiveContent()
+	}
+}
+
+func (g *EditorGroupWidget) focusActiveContent() {
+	if !g.focused {
+		return
+	}
+	if t := g.activeTab(); t != nil && t.Content != nil {
+		if setter, ok := t.Content.(interface{ SetFocused(bool) }); ok {
+			setter.SetFocused(true)
 		}
 	}
+}
+
+func (g *EditorGroupWidget) activeContent() Widget {
+	if t := g.activeTab(); t != nil {
+		return t.Content
+	}
+	return nil
+}
+
+func (g *EditorGroupWidget) refocusAfterClose(prev Widget) {
+	if prev != nil && prev != g.activeContent() {
+		if setter, ok := prev.(interface{ SetFocused(bool) }); ok {
+			setter.SetFocused(false)
+		}
+	}
+	g.focusActiveContent()
 }
 
 func (g *EditorGroupWidget) saveMultiState() {
@@ -1331,6 +1354,7 @@ func (g *EditorGroupWidget) CloseTab() {
 		return
 	}
 	closing := g.tabs[g.active]
+	prev := closing.Content
 	if g.OnFileClose != nil && closing.Highlighter != nil && !closing.Virtual {
 		g.OnFileClose(closing.FilePath, closing.Highlighter.Language())
 	}
@@ -1347,6 +1371,7 @@ func (g *EditorGroupWidget) CloseTab() {
 		g.active = len(g.tabs) - 1
 	}
 	g.syncTabs()
+	g.refocusAfterClose(prev)
 	if emptied {
 		g.notifyEmpty()
 	}
@@ -1417,6 +1442,7 @@ func (g *EditorGroupWidget) HasDirtyOtherTabs() bool {
 }
 
 func (g *EditorGroupWidget) CloseAllTabs() {
+	prev := g.activeContent()
 	for i := g.pinnedCount; i < len(g.tabs); i++ {
 		g.notifyContentTabClose(g.tabs[i])
 	}
@@ -1429,12 +1455,14 @@ func (g *EditorGroupWidget) CloseAllTabs() {
 	g.tabs = kept
 	g.active = 0
 	g.syncTabs()
+	g.refocusAfterClose(prev)
 	if emptied {
 		g.notifyEmpty()
 	}
 }
 
 func (g *EditorGroupWidget) CloseAllSaved() {
+	prev := g.activeContent()
 	var kept []editorTab
 	for i := range g.tabs {
 		if i < g.pinnedCount || (g.tabs[i].Buf != nil && g.tabs[i].Buf.Dirty) {
@@ -1453,6 +1481,7 @@ func (g *EditorGroupWidget) CloseAllSaved() {
 		g.active = len(g.tabs) - 1
 	}
 	g.syncTabs()
+	g.refocusAfterClose(prev)
 	if emptied {
 		g.notifyEmpty()
 	}
