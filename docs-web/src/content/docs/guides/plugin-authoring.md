@@ -1172,13 +1172,15 @@ panel:tree({
   },
   indent = 2,
   on_select = function(node)
-    -- called when a node is activated (Enter key or double-click)
+    -- called when the selection moves to a node, and when a node is clicked
+    -- or gets Enter, even if it was already selected
   end,
   on_expand = function(node)
     -- called when a node is expanded (use it to lazy-load children)
   end,
   on_command = function(command, node)
-    -- called when a context menu command or inline action is triggered
+    -- called for context menu commands and inline actions, and with
+    -- "activate" when a leaf node is clicked or gets Enter
   end,
   node_menu = {
     { label = "Open", command = "open" },
@@ -1193,7 +1195,7 @@ panel:tree({
 |--------------|----------|---------|------------------------------------------------|
 | `items`      | table    | `{}`    | Array of [tree node tables](#tree-node-format). |
 | `indent`     | number   | `2`     | Number of spaces per nesting level.            |
-| `on_select`  | function | nil     | Callback when a node is activated (Enter or double-click). Receives the node table. |
+| `on_select`  | function | nil     | Callback when the selection moves to a node, and when a node is clicked or gets Enter, even if it was already selected. Receives the node table. |
 | `on_expand`  | function | nil     | Callback when a node is expanded (not fired on collapse — intended for lazy-loading children). Receives the node table. |
 | `on_command`   | function | nil     | Callback when a context menu command or key command is selected. Receives `(command, node)`. |
 | `node_menu`    | table    | nil     | Array of [menu entries](#menu-entry-format) for right-click context menu on nodes. |
@@ -1216,10 +1218,12 @@ panel:list({
     { id = "item3", label = "Third item", muted = true },
   },
   on_select = function(node)
-    -- called when an item is activated
+    -- called when the selection moves to an item, and when an item is
+    -- clicked or gets Enter, even if it was already selected
   end,
   on_command = function(command, node)
-    -- called when a context menu command is triggered
+    -- called for context menu commands, and with "activate" when an item is
+    -- clicked or gets Enter
   end,
   node_menu = {
     { label = "Start", command = "start" },
@@ -1235,7 +1239,7 @@ panel:list({
 | Field        | Type     | Default | Description                                            |
 |--------------|----------|---------|--------------------------------------------------------|
 | `items`        | table    | `{}`    | Array of [tree node tables](#tree-node-format).        |
-| `on_select`    | function | nil     | Callback when an item is activated. Receives the node table. |
+| `on_select`    | function | nil     | Callback when the selection moves to an item, and when an item is clicked or gets Enter, even if it was already selected. Receives the node table. |
 | `on_command`   | function | nil     | Callback when a context menu command or key command is selected. Receives `(command, node)`. |
 | `node_menu`    | table    | nil     | Array of [menu entries](#menu-entry-format) for the right-click context menu. |
 | `key_commands` | table    | nil     | Map of single-char keys to command strings. When pressed, triggers `on_command(command, selected_node)`. |
