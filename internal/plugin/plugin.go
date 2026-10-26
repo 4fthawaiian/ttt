@@ -187,6 +187,7 @@ func (p *Plugin) Init() error {
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
+	setupTextModule(p.State)
 	setupSettingsModule(p.State, p)
 	setupStorageModule(p.State, p)
 
@@ -237,6 +238,7 @@ func (p *Plugin) InitFromSource(source string) error {
 	setupEventsModule(p.State, p)
 	setupJSONModule(p.State)
 	setupRegexModule(p.State)
+	setupTextModule(p.State)
 	setupSettingsModule(p.State, p)
 	setupStorageModule(p.State, p)
 
