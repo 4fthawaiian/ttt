@@ -102,6 +102,8 @@ func DefaultLSPSettings() LSPSettings {
 }
 
 type EditorSettings struct {
+	AutoClosing AutoClosingSettings `json:"autoClosing"`
+
 	TabSize           int                               `json:"tabSize"`
 	InsertSpaces      bool                              `json:"insertSpaces"`
 	WordWrap          bool                              `json:"wordWrap"`
@@ -145,6 +147,19 @@ type EditorSettings struct {
 
 	SaveAllOnQuit              bool `json:"saveAllOnQuit"`
 	SaveAllOnQuitExceptUnnamed bool `json:"saveAllOnQuitExceptUnnamed"`
+}
+
+type AutoClosingSettings struct {
+	Brackets    bool `json:"brackets"`
+	Quotes      bool `json:"quotes"`
+	SkipClosing bool `json:"skipClosing"`
+	DeletePairs bool `json:"deletePairs"`
+	InStrings   bool `json:"inStrings"`
+	PlainText   bool `json:"plainText"`
+}
+
+func DefaultAutoClosingSettings() AutoClosingSettings {
+	return AutoClosingSettings{SkipClosing: true, DeletePairs: true}
 }
 
 type EditorLanguageOverride struct {
@@ -242,6 +257,7 @@ func megabytes(mb *int, def int) int64 {
 
 func DefaultEditorSettings() EditorSettings {
 	return EditorSettings{
+		AutoClosing:             DefaultAutoClosingSettings(),
 		TabSize:                 4,
 		InsertSpaces:            true,
 		DiffMode:                DiffModeSplit,

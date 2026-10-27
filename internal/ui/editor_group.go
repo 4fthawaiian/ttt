@@ -65,6 +65,7 @@ type editorTab struct {
 	Vp          *view.Viewport
 	Undo        *undo.UndoStack
 	Sel         *selection.Selection
+	autoClosing *autoClosingState
 	Multi       *multicursor.MultiCursor
 	Highlighter *highlight.Highlighter
 	Diagnostics []Diagnostic
@@ -1005,6 +1006,9 @@ func (g *EditorGroupWidget) ClosePluginTab(key string) bool {
 
 func (g *EditorGroupWidget) notifyContentTabClose(tab editorTab) {
 	tab.Highlighter.Close()
+	if tab.autoClosing != nil {
+		tab.autoClosing.syntax.Close()
+	}
 	if tab.Diff != nil {
 		tab.Diff.Close()
 	}
@@ -2714,6 +2718,11 @@ func (g *EditorGroupWidget) syncTabs() {
 			g.Editor.Bookmarks = g.bookmarksByPath[t.FilePath]
 			g.bookmarkSyncPath = t.FilePath
 		}
+		if t.autoClosing == nil {
+			t.autoClosing = &autoClosingState{}
+		}
+		g.Editor.autoClosing = t.autoClosing
+		g.Editor.autoClosingPath = t.FilePath
 		g.Editor.Buf = t.Buf
 		g.Editor.Cursor = t.Cur
 		g.Editor.Viewport = t.Vp

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/eugenioenko/ttt/internal/config"
 	"github.com/eugenioenko/ttt/internal/core/buffer"
 	"github.com/eugenioenko/ttt/internal/core/cursor"
 	"github.com/eugenioenko/ttt/internal/core/diff"
@@ -51,6 +52,9 @@ type EditorPaneWidget struct {
 	WordWrap                bool
 	WordWrapColumn          int
 	AutoDedent              bool
+	AutoClosing             config.AutoClosingSettings
+	autoClosing             *autoClosingState
+	autoClosingPath         string
 	AutoIndent              bool
 	BracketPairColorization bool
 	BracketColorStyles      []term.Style
@@ -126,6 +130,7 @@ func NewEditorPaneWidget(buf *buffer.Buffer, cur *cursor.Cursor, vp *view.Viewpo
 		Viewport:          vp,
 		AutoDedent:        true,
 		AutoIndent:        true,
+		AutoClosing:       config.DefaultAutoClosingSettings(),
 		ScrollbarGitMarks: true,
 		bracketColorDirty: true,
 	}
@@ -307,7 +312,7 @@ func (e *EditorPaneWidget) DiagnosticAt(line, col int) *Diagnostic {
 
 func (e *EditorPaneWidget) exec(cmd undo.EditCommand) {
 	prevLines := len(e.Buf.Lines)
-	cmd.Apply(e.Buf)
+	e.applyAutoClosingEdit(cmd)
 	if undo.IsNoop(cmd) {
 		return
 	}

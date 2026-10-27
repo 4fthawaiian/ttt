@@ -6,6 +6,14 @@
     "scrollbarGlyphs": "blocks"
   },
   "editor": {
+    "autoClosing": {
+      "brackets": false,
+      "quotes": false,
+      "skipClosing": true,
+      "deletePairs": true,
+      "inStrings": false,
+      "plainText": false
+    },
     "tabSize": 4,
     "insertSpaces": true,
     "wordWrap": false,

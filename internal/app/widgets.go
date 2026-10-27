@@ -246,6 +246,7 @@ func BuildAppFromConfig(cfg *config.AppConfig, borders *term.BorderSet, ws *work
 	editorGroup.ApplyFileWordWrap()
 	editorGroup.Editor.AutoDedent = cfg.Settings.Editor.IsAutoDedentEnabled()
 	editorGroup.Editor.AutoIndent = cfg.Settings.Editor.IsAutoIndentEnabled()
+	editorGroup.Editor.AutoClosing = cfg.Settings.Editor.AutoClosing
 	editorGroup.Editor.LegacyScrollbarGlyphs = cfg.Settings.Appearance.ScrollbarGlyphs == config.ScrollbarGlyphsLegacy
 	editorGroup.Editor.ScrollbarGitMarks = cfg.Settings.Editor.IsScrollbarGitMarksEnabled()
 	editorGroup.UndoDeleteCursorStart = cfg.Settings.Editor.UndoDeleteCursorStart

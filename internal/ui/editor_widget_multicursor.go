@@ -59,13 +59,14 @@ func (e *EditorPaneWidget) multiExecRune(r rune) {
 	var cmds []undo.EditCommand
 	for i := len(e.Multi.Cursors) - 1; i >= 0; i-- {
 		cs := &e.Multi.Cursors[i]
+		hadSelection := cs.Sel.Active
 		if cs.Sel.Active {
 			start, end := cs.Sel.Range(cs.Line, cs.Col)
 			delCmd := &undo.DeleteSelectionCommand{
 				StartLine: start.Line, StartCol: start.Col,
 				EndLine: end.Line, EndCol: end.Col,
 			}
-			delCmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(delCmd)
 			cmds = append(cmds, delCmd)
 			cs.Line = start.Line
 			cs.Col = start.Col
@@ -73,16 +74,34 @@ func (e *EditorPaneWidget) multiExecRune(r rune) {
 			e.adjustLaterCursors(i, start, end)
 		}
 		insertCol := cs.Col
-		cmd := &undo.InsertRuneCommand{Line: cs.Line, Col: insertCol, Rune: r}
-		cmd.Apply(e.Buf)
+		if !hadSelection && e.autoClosingSkip(cs.Line, cs.Col, r) {
+			cs.Col++
+			continue
+		}
+		var cmd undo.EditCommand = &undo.InsertRuneCommand{Line: cs.Line, Col: insertCol, Rune: r}
+		var close rune
+		if !hadSelection {
+			close = e.autoClosingCloser(cs.Line, cs.Col, r)
+		}
+		width := 1
+		if close != 0 {
+			cmd = &autoClosingInsertCommand{InsertStringCommand: undo.InsertStringCommand{Line: cs.Line, Col: insertCol, Text: string([]rune{r, close})}}
+			width = 2
+		}
+		e.applyAutoClosingEdit(cmd)
 		cmds = append(cmds, cmd)
+		if close != 0 {
+			e.rememberAutoClosing(cs.Line, insertCol, r, close)
+		}
 		cs.Col++
-		e.shiftLaterCursors(i, cs.Line, insertCol, 1)
+		e.shiftLaterCursors(i, cs.Line, insertCol, width)
 	}
-	if e.Undo != nil {
-		e.Undo.Push(&undo.BatchCommand{Commands: cmds})
+	if len(cmds) > 0 {
+		if e.Undo != nil {
+			e.Undo.Push(&undo.BatchCommand{Commands: cmds})
+		}
+		e.bufferDirty = true
 	}
-	e.bufferDirty = true
 	e.syncFromMulti()
 }
 
@@ -101,7 +120,7 @@ func (e *EditorPaneWidget) multiExecTab() {
 				StartLine: start.Line, StartCol: start.Col,
 				EndLine: end.Line, EndCol: end.Col,
 			}
-			delCmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(delCmd)
 			cmds = append(cmds, delCmd)
 			cs.Line = start.Line
 			cs.Col = start.Col
@@ -110,7 +129,7 @@ func (e *EditorPaneWidget) multiExecTab() {
 		}
 		insertCol := cs.Col
 		cmd := &undo.InsertStringCommand{Line: cs.Line, Col: insertCol, Text: indent}
-		cmd.Apply(e.Buf)
+		e.applyAutoClosingEdit(cmd)
 		cmds = append(cmds, cmd)
 		cs.Col += n
 		e.shiftLaterCursors(i, cs.Line, insertCol, n)
@@ -133,7 +152,7 @@ func (e *EditorPaneWidget) multiExecBackspace() {
 				StartLine: start.Line, StartCol: start.Col,
 				EndLine: end.Line, EndCol: end.Col,
 			}
-			delCmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(delCmd)
 			cmds = append(cmds, delCmd)
 			cs.Line = start.Line
 			cs.Col = start.Col
@@ -142,16 +161,22 @@ func (e *EditorPaneWidget) multiExecBackspace() {
 			continue
 		}
 		cs.Line = e.Buf.ClampLine(cs.Line)
-		if cs.Col > 0 {
+		if e.autoClosingDelete(cs.Line, cs.Col) {
+			cmd := &undo.DeleteSelectionCommand{StartLine: cs.Line, StartCol: cs.Col - 1, EndLine: cs.Line, EndCol: cs.Col + 1}
+			e.applyAutoClosingEdit(cmd)
+			cmds = append(cmds, cmd)
+			cs.Col--
+			e.shiftLaterCursors(i, cs.Line, cs.Col, -2)
+		} else if cs.Col > 0 {
 			cmd := &undo.DeleteRuneCommand{Line: cs.Line, Col: cs.Col - 1}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 			cmds = append(cmds, cmd)
 			cs.Col--
 			e.shiftLaterCursors(i, cs.Line, cs.Col, -1)
 		} else if cs.Line > 0 {
 			prevLen := len([]rune(e.Buf.Lines[cs.Line-1]))
 			cmd := &undo.JoinLineCommand{Line: cs.Line}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 			cmds = append(cmds, cmd)
 			e.shiftLaterLines(i, cs.Line, -1)
 			cs.Line--
@@ -179,7 +204,7 @@ func (e *EditorPaneWidget) multiExecDelete() {
 				StartLine: start.Line, StartCol: start.Col,
 				EndLine: end.Line, EndCol: end.Col,
 			}
-			delCmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(delCmd)
 			cmds = append(cmds, delCmd)
 			cs.Line = start.Line
 			cs.Col = start.Col
@@ -191,12 +216,12 @@ func (e *EditorPaneWidget) multiExecDelete() {
 		lineLen := len([]rune(e.Buf.Lines[cs.Line]))
 		if cs.Col < lineLen {
 			cmd := &undo.DeleteRuneCommand{Line: cs.Line, Col: cs.Col}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 			cmds = append(cmds, cmd)
 			e.shiftLaterCursors(i, cs.Line, cs.Col, -1)
 		} else if cs.Line < len(e.Buf.Lines)-1 {
 			cmd := &undo.JoinLineCommand{Line: cs.Line + 1}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 			cmds = append(cmds, cmd)
 			e.shiftLaterLines(i, cs.Line+1, -1)
 		}
@@ -222,7 +247,7 @@ func (e *EditorPaneWidget) multiExecEnter() {
 				StartLine: start.Line, StartCol: start.Col,
 				EndLine: end.Line, EndCol: end.Col,
 			}
-			delCmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(delCmd)
 			cmds = append(cmds, delCmd)
 			cs.Line = start.Line
 			cs.Col = start.Col
@@ -235,14 +260,14 @@ func (e *EditorPaneWidget) multiExecEnter() {
 			indent = leadingWhitespace(e.Buf.Lines[cs.Line])
 		}
 		cmd := &undo.SplitLineCommand{Line: cs.Line, Col: cs.Col}
-		cmd.Apply(e.Buf)
+		e.applyAutoClosingEdit(cmd)
 		cmds = append(cmds, cmd)
 		e.shiftLaterLines(i, cs.Line, 1)
 		cs.Line++
 		cs.Col = 0
 		if len(indent) > 0 {
 			indCmd := &undo.InsertStringCommand{Line: cs.Line, Col: 0, Text: indent}
-			indCmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(indCmd)
 			cmds = append(cmds, indCmd)
 			cs.Col = len([]rune(indent))
 		}
@@ -529,7 +554,7 @@ func (e *EditorPaneWidget) multiPasteText(text string) {
 				EndLine:   end.Line,
 				EndCol:    end.Col,
 			}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 
 			if !undo.IsNoop(cmd) {
 				commands = append(commands, cmd)
@@ -559,7 +584,7 @@ func (e *EditorPaneWidget) multiPasteText(text string) {
 				Col:  col,
 				Text: parts[0],
 			}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 			commands = append(commands, cmd)
 			cs.Line, cs.Col = line, col+len([]rune(parts[0]))
 
@@ -581,7 +606,7 @@ func (e *EditorPaneWidget) multiPasteText(text string) {
 			OldLines: []string{e.Buf.Lines[line]},
 			NewLines: newLines,
 		}
-		cmd.Apply(e.Buf)
+		e.applyAutoClosingEdit(cmd)
 		commands = append(commands, cmd)
 
 		cs.Line = line + len(parts) - 1
@@ -672,7 +697,7 @@ func (e *EditorPaneWidget) multiCut() {
 				EndLine:   end.Line,
 				EndCol:    end.Col,
 			}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 
 			if !undo.IsNoop(cmd) {
 				commands = append(commands, cmd)
@@ -692,14 +717,14 @@ func (e *EditorPaneWidget) multiCut() {
 				OldLines: []string{e.Buf.Lines[0]},
 				NewLines: []string{""},
 			}
-			cmd.Apply(e.Buf)
+			e.applyAutoClosingEdit(cmd)
 			commands = append(commands, cmd)
 			cs.Line, cs.Col = 0, 0
 			continue
 		}
 
 		cmd := &undo.DeleteLineCommand{Idx: line}
-		cmd.Apply(e.Buf)
+		e.applyAutoClosingEdit(cmd)
 		commands = append(commands, cmd)
 		// Adjust cursor positions and active selection anchors.
 		for j := range e.Multi.Cursors {
