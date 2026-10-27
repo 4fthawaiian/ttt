@@ -167,6 +167,9 @@ func (m *Manager) LoadAll() []*Plugin {
 				p.Log = m.logFactory(p.Name)
 			}
 			p.AppVersion = m.appVersion
+			// Host APIs must be in place before init so plugin top-level code
+			// can use them, matching the ApproveAndLoad path.
+			m.wireAPIs(p)
 			if err := m.initPlugin(p); err != nil {
 				continue
 			}

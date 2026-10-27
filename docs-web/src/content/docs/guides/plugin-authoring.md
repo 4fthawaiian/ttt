@@ -2637,6 +2637,59 @@ local function use_binary(path)
 end
 ```
 
+### `sys.spawn(binary, [opts])`
+
+Spawn a long-lived child process with **raw piped stdio** — the missing
+middle between one-shot `sys.exec` and PTY-hosted `terminal.spawn`. Use it
+for interactive protocols: JSON-RPC agents over stdio, REPLs, and streaming
+tools where you exchange a conversation with the child's pipes. Requires the
+`system.exec` permission; the binary must be in the same allowlist.
+
+**Options** (all optional):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `args` | table | Array of string arguments. |
+| `cwd` | string | Working directory for the child. |
+| `env` | table | Map of extra environment variables (`{NAME = "value"}`), merged onto the host environment. |
+| `on_stdout` | function | Called with each stdout chunk (`string`) on the main thread. |
+| `on_stderr` | function | Called with each stderr chunk (`string`) on the main thread. |
+| `on_exit` | function | Called once with `(exit_code, err)` when the child exits. |
+
+**Returns** a process handle on success, or `nil, error` on failure.
+
+The handle has methods:
+
+| Method | Description |
+|--------|-------------|
+| `proc:write(data)` | Queue `data` for the child's stdin. Returns `true`, or `nil, error` when the process is closed or the write queue (64 messages) is full. |
+| `proc:close_stdin()` | Close the child's stdin after all queued writes flush, so it sees EOF. |
+| `proc:kill()` | Terminate the child. |
+| `proc:pid()` | The child's process id. |
+
+Chunks arrive in arbitrary sizes — accumulate and split on your protocol's
+framing (e.g. newline-delimited JSON). Both streams are always drained even
+without callbacks, so a child can't stall on a full pipe. Spawned processes
+are killed automatically when the plugin is reloaded or unloaded.
+
+```lua
+local sys = require("ttt.system")
+
+local buf = ""
+local proc, err = sys.spawn("devin", {
+  args = {"acp"},
+  cwd = ".",
+  on_stdout = function(chunk)
+    buf = buf .. chunk
+    -- split buf on '\n' and json-decode complete lines
+  end,
+  on_exit = function(code) ttt.log("agent exited: " .. code) end,
+})
+if proc then
+  proc:write('{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}\n')
+end
+```
+
 ### `sys.env(name)`
 
 Read an environment variable. Requires `system.env` permission.

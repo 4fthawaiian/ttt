@@ -151,6 +151,37 @@ type SystemAPI interface {
 	// Exec runs binary with args and kills the child when ctx is done.
 	Exec(ctx context.Context, binary string, args []string, opts ExecOptions) (stdout, stderr string, exitCode int, err error)
 	Env(name string) string
+	// Spawn starts binary with args and piped stdio (no PTY). The caller owns
+	// reading Stdout/Stderr to completion and must call Wait to reap the
+	// child.
+	Spawn(binary string, args []string, opts SpawnOptions) (SpawnedProcess, error)
+}
+
+// SpawnOptions carries optional parameters for SystemAPI.Spawn.
+type SpawnOptions struct {
+	Cwd string   // working directory; empty keeps the host's cwd
+	Env []string // extra "KEY=value" entries, appended to the host environment
+}
+
+// SpawnedProcess is a running child process with piped standard streams.
+// Writes go to the child's stdin; Stdout/Stderr are readable until the
+// process exits.
+type SpawnedProcess interface {
+	// Write sends data to the child's stdin.
+	Write(data []byte) (int, error)
+	// CloseStdin half-closes the pipe so the child sees EOF on stdin.
+	CloseStdin() error
+	// Kill terminates the child.
+	Kill() error
+	// PID returns the child's process id.
+	PID() int
+	// Stdout returns the child's stdout stream.
+	Stdout() io.Reader
+	// Stderr returns the child's stderr stream.
+	Stderr() io.Reader
+	// Wait blocks until the child exits and returns its exit code. It must be
+	// called exactly once, after Stdout and Stderr are drained.
+	Wait() (int, error)
 }
 
 type NetworkAPI interface {

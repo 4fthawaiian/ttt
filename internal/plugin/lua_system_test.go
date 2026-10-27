@@ -1,8 +1,10 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -19,9 +21,14 @@ type mockSystemAPI struct {
 	// block makes Exec wait for its context, as a running child would.
 	block bool
 	// writes go to stdout one Write at a time, before stdout.
-	writes   []string
-	started  chan struct{}
-	returned chan struct{}
+	writes      []string
+	started     chan struct{}
+	returned    chan struct{}
+	spawnBinary string
+	spawnArgs   []string
+	spawnOpts   SpawnOptions
+	spawnProc   *mockSpawnedProcess
+	spawnErr    error
 }
 
 func (m *mockSystemAPI) Exec(ctx context.Context, binary string, args []string, opts ExecOptions) (string, string, int, error) {
@@ -60,6 +67,23 @@ func (m *mockSystemAPI) Env(name string) string {
 		return m.envVars[name]
 	}
 	return ""
+}
+
+func (m *mockSystemAPI) Spawn(binary string, args []string, opts SpawnOptions) (SpawnedProcess, error) {
+	m.spawnBinary = binary
+	m.spawnArgs = args
+	m.spawnOpts = opts
+	if m.spawnErr != nil {
+		return nil, m.spawnErr
+	}
+	if m.spawnProc != nil {
+		return m.spawnProc, nil
+	}
+	return &mockSpawnedProcess{
+		stdin:  &bytes.Buffer{},
+		stdout: strings.NewReader(""),
+		stderr: strings.NewReader(""),
+	}, nil
 }
 
 func setupTestPluginWithSystem(perms PermissionSet, sys *mockSystemAPI) (*Plugin, func()) {

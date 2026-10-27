@@ -148,6 +148,7 @@ type Plugin struct {
 	execs       map[int]runningExec
 	nextExecID  int
 	rpcConns    map[*rpcConn]struct{}
+	procs       map[*pluginProc]struct{}
 }
 
 type CommandInfo struct {
@@ -297,6 +298,7 @@ func (p *Plugin) Destroy() {
 	defer p.mu.Unlock()
 	p.stopTimersLocked()
 	p.closeRPCConnsLocked()
+	p.killProcsLocked()
 	if p.State != nil {
 		p.State.Close()
 		p.State = nil

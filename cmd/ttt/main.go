@@ -317,6 +317,15 @@ Docs: https://tttedit.dev
 		// Before LoadAll, so ttt.version() is available during plugin init.
 		pluginManager.SetAppVersion(editor.Version)
 
+		// Before LoadAll, so host APIs are available during plugin init.
+		pluginManager.SetEditorAPI(app.NewPluginEditorAPI(editor))
+		pluginManager.SetFilesystemAPI(func(p *plugin.Plugin) plugin.FilesystemAPI {
+			return app.NewPluginFilesystemAPIFor(p, editor.Workspace.Paths())
+		})
+		pluginManager.SetSystemAPI(app.NewPluginSystemAPI())
+		pluginManager.SetNetworkAPI(app.NewPluginNetworkAPI())
+		pluginManager.SetSettingsAPI(app.NewPluginSettingsAPI(editor))
+
 		pendingApprovals := pluginManager.LoadAll()
 
 		for _, reg := range pluginManager.SidebarPanels {
@@ -325,13 +334,6 @@ Docs: https://tttedit.dev
 		for _, reg := range pluginManager.BottomPanels {
 			editor.BottomPanel.AddPanel(reg.ID, reg.Title, ui.NewWidgetAdapter(reg.Widget))
 		}
-		pluginManager.SetEditorAPI(app.NewPluginEditorAPI(editor))
-		pluginManager.SetFilesystemAPI(func(p *plugin.Plugin) plugin.FilesystemAPI {
-			return app.NewPluginFilesystemAPIFor(p, editor.Workspace.Paths())
-		})
-		pluginManager.SetSystemAPI(app.NewPluginSystemAPI())
-		pluginManager.SetNetworkAPI(app.NewPluginNetworkAPI())
-		pluginManager.SetSettingsAPI(app.NewPluginSettingsAPI(editor))
 
 		for _, p := range pluginManager.Plugins() {
 			p.RequestRedraw = func() {

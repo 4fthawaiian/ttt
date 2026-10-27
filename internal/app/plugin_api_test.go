@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -436,6 +437,53 @@ func TestPluginSystemAPI_ExecKilledOnContextDone(t *testing.T) {
 	}
 	if code == 0 {
 		t.Error("killed child reported exit code 0")
+	}
+}
+
+// TestPluginSystemAPI_Spawn exercises the real subprocess-stdio path: writes
+// reach the child's stdin, close_stdin gives it EOF, and output is readable
+// until Wait reaps it.
+func TestPluginSystemAPI_Spawn(t *testing.T) {
+	if _, err := exec.LookPath("cat"); err != nil {
+		t.Skip("cat not available")
+	}
+	api := NewPluginSystemAPI()
+
+	proc, err := api.Spawn("cat", nil, plugin.SpawnOptions{})
+	if err != nil {
+		t.Fatalf("spawn cat: %v", err)
+	}
+	if proc.PID() <= 0 {
+		t.Fatal("expected a positive pid")
+	}
+
+	if _, err := proc.Write([]byte("hello spawn\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := proc.CloseStdin(); err != nil {
+		t.Fatalf("close stdin: %v", err)
+	}
+
+	out, err := io.ReadAll(proc.Stdout())
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	if string(out) != "hello spawn\n" {
+		t.Errorf("expected echo, got %q", out)
+	}
+	if _, err := io.ReadAll(proc.Stderr()); err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	code, err := proc.Wait()
+	if err != nil || code != 0 {
+		t.Fatalf("wait: code=%d err=%v", code, err)
+	}
+}
+
+func TestPluginSystemAPI_SpawnBlockedArgs(t *testing.T) {
+	api := NewPluginSystemAPI()
+	if _, err := api.Spawn("git", []string{"-c", "core.fsmonitor=!sh"}, plugin.SpawnOptions{}); err == nil {
+		t.Fatal("expected dangerous git args to be rejected")
 	}
 }
 

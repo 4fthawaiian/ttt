@@ -581,6 +581,71 @@ func (s *PluginSystemAPI) Env(name string) string {
 	return os.Getenv(name)
 }
 
+// pluginSpawnedProcess adapts *exec.Cmd to plugin.SpawnedProcess.
+type pluginSpawnedProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	stderr io.ReadCloser
+}
+
+func (p *pluginSpawnedProcess) Write(data []byte) (int, error) { return p.stdin.Write(data) }
+func (p *pluginSpawnedProcess) CloseStdin() error              { return p.stdin.Close() }
+func (p *pluginSpawnedProcess) Kill() error                    { return p.cmd.Process.Kill() }
+func (p *pluginSpawnedProcess) PID() int                       { return p.cmd.Process.Pid }
+func (p *pluginSpawnedProcess) Stdout() io.Reader              { return p.stdout }
+func (p *pluginSpawnedProcess) Stderr() io.Reader              { return p.stderr }
+
+func (p *pluginSpawnedProcess) Wait() (int, error) {
+	err := p.cmd.Wait()
+	if err == nil {
+		return 0, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode(), nil
+	}
+	return -1, err
+}
+
+// Spawn starts binary with raw piped stdio for interactive use (agents
+// speaking JSON-RPC over stdio, REPLs, streaming tools). Same argument
+// validation as Exec applies.
+func (s *PluginSystemAPI) Spawn(binary string, args []string, opts plugin.SpawnOptions) (plugin.SpawnedProcess, error) {
+	if err := s.validateArgs(binary, args); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(binary, args...)
+	if opts.Cwd != "" {
+		cmd.Dir = opts.Cwd
+	}
+	if len(opts.Env) > 0 {
+		cmd.Env = append(os.Environ(), opts.Env...)
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		stdin.Close()
+		stdout.Close()
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		stderr.Close()
+		return nil, err
+	}
+	return &pluginSpawnedProcess{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+}
+
 // PluginNetworkAPI implements plugin.NetworkAPI. Where a plugin may connect
 // is its network.http grant's business; this layer only enforces the scheme
 // and holds redirects to the grant.

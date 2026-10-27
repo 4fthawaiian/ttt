@@ -24,6 +24,7 @@ func setupSystemModule(L *lua.LState, p *Plugin) {
 			L.SetField(mod, "exec", L.NewFunction(sysExec(p)))
 			L.SetField(mod, "exec_async", L.NewFunction(sysExecAsync(p)))
 			L.SetField(mod, "request_exec", L.NewFunction(sysRequestExec(p)))
+			L.SetField(mod, "spawn", L.NewFunction(sysSpawn(p)))
 		}
 
 		if hasEnv {
@@ -35,6 +36,14 @@ func setupSystemModule(L *lua.LState, p *Plugin) {
 	}
 
 	L.PreloadModule("ttt.system", loader)
+
+	mt := L.NewTypeMetatable(procTypeName)
+	L.SetField(mt, "__index", L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
+		"write":       procWrite,
+		"close_stdin": procCloseStdin,
+		"kill":        procKill,
+		"pid":         procPID,
+	}))
 }
 
 type execRequest struct {
