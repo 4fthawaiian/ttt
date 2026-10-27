@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -15,10 +16,11 @@ import (
 // code, recorded writes, and signal channels for synchronization with the
 // plugin's pump/writer goroutines.
 type mockSpawnedProcess struct {
-	stdin  *bytes.Buffer
-	stdout io.Reader
-	stderr io.Reader
-	code   int
+	stdin    *bytes.Buffer
+	stdout   io.Reader
+	stderr   io.Reader
+	code     int
+	writeErr error
 
 	mu          sync.Mutex
 	killed      bool
@@ -30,6 +32,9 @@ type mockSpawnedProcess struct {
 }
 
 func (m *mockSpawnedProcess) Write(data []byte) (int, error) {
+	if m.writeErr != nil {
+		return 0, m.writeErr
+	}
 	n, err := m.stdin.Write(data)
 	if m.wrote != nil {
 		select {
@@ -103,6 +108,55 @@ func waitFor(t *testing.T, ch chan struct{}, what string) {
 	}
 }
 
+func blockingSpawnedProcess(t *testing.T) *mockSpawnedProcess {
+	t.Helper()
+	stdout, stdoutWriter := io.Pipe()
+	stderr, stderrWriter := io.Pipe()
+	mp := &mockSpawnedProcess{
+		stdin: &bytes.Buffer{}, stdout: stdout, stderr: stderr,
+		waited: make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		stdoutWriter.Close()
+		stderrWriter.Close()
+		waitFor(t, mp.waited, "process reaping")
+	})
+	return mp
+}
+
+func TestSpawnRejectsInvalidOptions(t *testing.T) {
+	for _, opts := range []string{
+		`{env = {PATH = "/tmp"}}`,
+		`{env = {Path = "/tmp"}}`,
+		`{env = {LD_PRELOAD = "/tmp/evil.so"}}`,
+		`{env = {DYLD_INSERT_LIBRARIES = "/tmp/evil.dylib"}}`,
+		`{env = {GIT_CONFIG_COUNT = 1}}`,
+		`{env = {GIT_SSH_COMMAND = "evil"}}`,
+		`{env = {[""] = "x"}}`,
+		`{env = {["A=B"] = "x"}}`,
+		`{env = {["A\0B"] = "x"}}`,
+		`{env = {A = "x\0y"}}`,
+		`{env = {A = true}}`,
+		`{env = {"positional"}}`,
+		`{env = "A=x"}`,
+		`{on_stdout = true}`,
+		`{on_stderr = "callback"}`,
+		`{on_exit = {}}`,
+	} {
+		t.Run(opts, func(t *testing.T) {
+			mock := &mockSystemAPI{}
+			p, cleanup := setupTestPluginWithSystem(PermissionSet{SystemExec: []string{"git"}}, mock)
+			defer cleanup()
+			if err := p.State.DoString(`require("ttt.system").spawn("git", ` + opts + `)`); err == nil {
+				t.Fatal("expected invalid spawn options to raise an error")
+			}
+			if mock.spawnBinary != "" {
+				t.Fatal("host Spawn called despite invalid options")
+			}
+		})
+	}
+}
+
 func TestSpawnDeniedWithoutExecGrant(t *testing.T) {
 	p, cleanup := newTestPluginBase(PermissionSet{})
 	defer cleanup()
@@ -160,7 +214,7 @@ func TestSpawnPassesOptions(t *testing.T) {
 		local proc, err = sys.spawn("devin", {
 			args = {"acp"},
 			cwd = "/tmp/ws",
-			env = {FOO = "bar"},
+			env = {FOO = "bar", PORT = 5433, GIT_DIR = "/tmp/ws/.git"},
 		})
 		assert(proc ~= nil, tostring(err))
 		_G.pid = proc:pid()
@@ -177,7 +231,7 @@ func TestSpawnPassesOptions(t *testing.T) {
 	if mock.spawnOpts.Cwd != "/tmp/ws" {
 		t.Errorf("unexpected cwd: %q", mock.spawnOpts.Cwd)
 	}
-	if len(mock.spawnOpts.Env) != 1 || mock.spawnOpts.Env[0] != "FOO=bar" {
+	if strings.Join(mock.spawnOpts.Env, ",") != "FOO=bar,GIT_DIR=/tmp/ws/.git,PORT=5433" {
 		t.Errorf("unexpected env: %v", mock.spawnOpts.Env)
 	}
 	if p.State.GetGlobal("pid") != lua.LNumber(4242) {
@@ -257,13 +311,9 @@ func TestSpawnStreamsToCallbacks(t *testing.T) {
 }
 
 func TestProcWriteAndCloseStdin(t *testing.T) {
-	mp := &mockSpawnedProcess{
-		stdin:  &bytes.Buffer{},
-		stdout: strings.NewReader(""),
-		stderr: strings.NewReader(""),
-		wrote:  make(chan struct{}, 8),
-		closed: make(chan struct{}),
-	}
+	mp := blockingSpawnedProcess(t)
+	mp.wrote = make(chan struct{}, 8)
+	mp.closed = make(chan struct{})
 	mock := &mockSystemAPI{spawnProc: mp}
 	p, cleanup := setupTestPluginWithSystem(
 		PermissionSet{SystemExec: []string{"cat"}},
@@ -290,11 +340,7 @@ func TestProcWriteAndCloseStdin(t *testing.T) {
 }
 
 func TestProcWriteAfterCloseFails(t *testing.T) {
-	mp := &mockSpawnedProcess{
-		stdin:  &bytes.Buffer{},
-		stdout: strings.NewReader(""),
-		stderr: strings.NewReader(""),
-	}
+	mp := blockingSpawnedProcess(t)
 	mock := &mockSystemAPI{spawnProc: mp}
 	p, cleanup := setupTestPluginWithSystem(
 		PermissionSet{SystemExec: []string{"cat"}},
@@ -305,8 +351,7 @@ func TestProcWriteAfterCloseFails(t *testing.T) {
 	err := p.State.DoString(`
 		local sys = require("ttt.system")
 		local proc = sys.spawn("cat", {})
-		proc:close_stdin()
-		-- Wait a tick for the close to be marked, then write must fail.
+		assert(proc:close_stdin() == true)
 		_G.ok, _G.err = proc:write("too late")
 	`)
 	if err != nil {
@@ -321,11 +366,7 @@ func TestProcWriteAfterCloseFails(t *testing.T) {
 }
 
 func TestDestroyKillsSpawnedProcesses(t *testing.T) {
-	mp := &mockSpawnedProcess{
-		stdin:  &bytes.Buffer{},
-		stdout: strings.NewReader(""),
-		stderr: strings.NewReader(""),
-	}
+	mp := blockingSpawnedProcess(t)
 	mock := &mockSystemAPI{spawnProc: mp}
 	p, _ := setupTestPluginWithSystem(
 		PermissionSet{SystemExec: []string{"cat"}},
@@ -343,5 +384,77 @@ func TestDestroyKillsSpawnedProcesses(t *testing.T) {
 	p.Destroy()
 	if !mp.killedState() {
 		t.Error("expected spawned process to be killed on plugin destroy")
+	}
+}
+
+func TestProcWriteErrorPostedToMainThread(t *testing.T) {
+	for _, destroy := range []bool{false, true} {
+		name := "active"
+		if destroy {
+			name = "destroyed"
+		}
+		t.Run(name, func(t *testing.T) {
+			p, _ := newTestPluginBase(PermissionSet{})
+			defer p.Destroy()
+			post, ch := postChan()
+			p.SetPostAsync(post)
+			var logs []string
+			p.Log = func(_, message string) { logs = append(logs, message) }
+			pp := &pluginProc{
+				p: p, proc: &mockSpawnedProcess{writeErr: io.ErrClosedPipe},
+				writeCh: make(chan procWriteMsg, 1),
+			}
+			pp.writeCh <- procWriteMsg{data: []byte("hello")}
+			close(pp.writeCh)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				pp.writeLoop()
+			}()
+			waitFor(t, done, "failed write")
+			if p.errorCount != 0 || len(logs) != 0 {
+				t.Fatal("write error logged before main-thread delivery")
+			}
+			if destroy {
+				p.Destroy()
+			}
+			runPosted(t, ch, 1)
+			want := 1
+			if destroy {
+				want = 0
+			}
+			if p.errorCount != want || len(logs) != want {
+				t.Fatalf("error count=%d logs=%v, want %d", p.errorCount, logs, want)
+			}
+		})
+	}
+}
+
+func TestProcEnqueueWhileReaping(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		pp := &pluginProc{
+			p: &Plugin{}, proc: &mockSpawnedProcess{},
+			writeCh: make(chan procWriteMsg, 1),
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := pp.enqueue(procWriteMsg{data: []byte("hello")}); err != nil && !errors.Is(err, errProcClosed) {
+				t.Errorf("enqueue: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			pp.reap()
+		}()
+		close(start)
+		wg.Wait()
+		if err := pp.enqueue(procWriteMsg{}); !errors.Is(err, errProcClosed) {
+			t.Fatalf("write after reaping: %v", err)
+		}
 	}
 }

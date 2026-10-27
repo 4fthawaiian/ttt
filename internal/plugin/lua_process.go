@@ -27,7 +27,7 @@ var (
 //	  on_stderr = function(chunk) end,
 //	  on_exit   = function(code) end,
 //	})
-//	proc:write("hello\n")    -- queued; returns false when the queue is full
+//	proc:write("hello\n")    -- queued; returns nil, error when the queue is full
 //	proc:close_stdin()       -- child sees EOF after queued writes flush
 //	proc:kill()
 //	proc:pid()               -- number
@@ -99,17 +99,23 @@ func sysSpawn(p *Plugin) lua.LGFunction {
 					args = append(args, v.String())
 				})
 			}
-			if envTbl, ok := L.GetField(opts, "env").(*lua.LTable); ok {
-				envTbl.ForEach(func(k, v lua.LValue) {
-					env = append(env, k.String()+"="+v.String())
-				})
+			switch v := L.GetField(opts, "env").(type) {
+			case *lua.LNilType:
+			case *lua.LTable:
+				parsed, err := parseExecEnv(binary, v)
+				if err != nil {
+					L.ArgError(2, err.Error())
+				}
+				env = parsed
+			default:
+				L.ArgError(2, "env must be a table of strings")
 			}
 			if s, ok := L.GetField(opts, "cwd").(lua.LString); ok {
 				cwd = string(s)
 			}
-			onStdout, _ = L.GetField(opts, "on_stdout").(*lua.LFunction)
-			onStderr, _ = L.GetField(opts, "on_stderr").(*lua.LFunction)
-			onExit, _ = L.GetField(opts, "on_exit").(*lua.LFunction)
+			onStdout = optFunction(L, 2, opts, "on_stdout")
+			onStderr = optFunction(L, 2, opts, "on_stderr")
+			onExit = optFunction(L, 2, opts, "on_exit")
 		}
 
 		proc, err := p.System.Spawn(binary, args, SpawnOptions{Cwd: cwd, Env: env})
@@ -149,7 +155,12 @@ func (pp *pluginProc) writeLoop() {
 			continue
 		}
 		if _, err := pp.proc.Write(msg.data); err != nil {
-			pp.p.logError("proc write", err)
+			p := pp.p
+			p.SafePostAsync(&PluginAsyncResult{Plugin: p, Callback: func() {
+				if p.State != nil {
+					p.logError("proc write", err)
+				}
+			}})
 			// The child is gone or the pipe is broken; further writes
 			// can't succeed, so stop draining.
 			return
@@ -207,8 +218,8 @@ func (pp *pluginProc) reap() {
 	}
 	pp.reaped = true
 	pp.closed = true
-	pp.mu.Unlock()
 	close(pp.writeCh)
+	pp.mu.Unlock()
 
 	p := pp.p
 	p.unregisterProc(pp)
@@ -233,13 +244,15 @@ func (pp *pluginProc) reap() {
 // the queue is full rather than blocking the caller.
 func (pp *pluginProc) enqueue(msg procWriteMsg) error {
 	pp.mu.Lock()
+	defer pp.mu.Unlock()
 	if pp.closed {
-		pp.mu.Unlock()
 		return errProcClosed
 	}
-	pp.mu.Unlock()
 	select {
 	case pp.writeCh <- msg:
+		if msg.close {
+			pp.closed = true
+		}
 		return nil
 	default:
 		return errProcQueueFull
@@ -295,7 +308,6 @@ func procCloseStdin(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
-	pp.markClosed()
 	L.Push(lua.LTrue)
 	return 1
 }

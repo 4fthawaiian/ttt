@@ -2644,6 +2644,8 @@ middle between one-shot `sys.exec` and PTY-hosted `terminal.spawn`. Use it
 for interactive protocols: JSON-RPC agents over stdio, REPLs, and streaming
 tools where you exchange a conversation with the child's pipes. Requires the
 `system.exec` permission; the binary must be in the same allowlist.
+Environment variables follow the same validation and restrictions as `sys.exec`;
+invalid environments or non-function callbacks raise an error before spawning.
 
 **Options** (all optional):
 
