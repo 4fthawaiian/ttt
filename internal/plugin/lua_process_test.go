@@ -403,7 +403,10 @@ func TestProcWriteErrorPostedToMainThread(t *testing.T) {
 			pp := &pluginProc{
 				p: p, proc: &mockSpawnedProcess{writeErr: io.ErrClosedPipe},
 				writeCh: make(chan procWriteMsg, 1),
+				cbCh:    make(chan func(), procCallbackQueueSize),
+				abandon: make(chan struct{}),
 			}
+			go pp.dispatchLoop()
 			pp.writeCh <- procWriteMsg{data: []byte("hello")}
 			close(pp.writeCh)
 			done := make(chan struct{})
@@ -416,6 +419,12 @@ func TestProcWriteErrorPostedToMainThread(t *testing.T) {
 				t.Fatal("write error logged before main-thread delivery")
 			}
 			if destroy {
+				// The callback must be enqueued before teardown, or the
+				// dispatcher's post is skipped entirely and there is
+				// nothing to run below.
+				for i := 0; i < 200 && len(ch) == 0; i++ {
+					time.Sleep(10 * time.Millisecond)
+				}
 				p.Destroy()
 			}
 			runPosted(t, ch, 1)
@@ -435,6 +444,8 @@ func TestProcEnqueueWhileReaping(t *testing.T) {
 		pp := &pluginProc{
 			p: &Plugin{}, proc: &mockSpawnedProcess{},
 			writeCh: make(chan procWriteMsg, 1),
+			cbCh:    make(chan func(), procCallbackQueueSize),
+			abandon: make(chan struct{}),
 		}
 		start := make(chan struct{})
 		var wg sync.WaitGroup
@@ -456,5 +467,51 @@ func TestProcEnqueueWhileReaping(t *testing.T) {
 		if err := pp.enqueue(procWriteMsg{}); !errors.Is(err, errProcClosed) {
 			t.Fatalf("write after reaping: %v", err)
 		}
+	}
+}
+
+// Callback delivery is serialized per process: every streamed chunk runs
+// before on_exit, even though EOF reaping is asynchronous.
+func TestSpawnCallbackOrder(t *testing.T) {
+	mp := &mockSpawnedProcess{
+		stdin:  &bytes.Buffer{},
+		stdout: strings.NewReader("chunk-one|chunk-two|"),
+		stderr: strings.NewReader(""),
+		code:   0,
+	}
+	mock := &mockSystemAPI{spawnProc: mp}
+	p, cleanup := setupTestPluginWithSystem(
+		PermissionSet{SystemExec: []string{"cat"}},
+		mock,
+	)
+	defer cleanup()
+	post, ch := postChan()
+	p.PostAsync = post
+
+	err := p.State.DoString(`
+		local sys = require("ttt.system")
+		_G.events = {}
+		local proc = sys.spawn("cat", {
+			on_stdout = function(c) table.insert(_G.events, "out:" .. c) end,
+			on_exit = function(code) table.insert(_G.events, "exit:" .. code) end,
+		})
+		assert(proc ~= nil)
+	`)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	// One chunk + on_exit; the dispatcher holds the next post until the
+	// previous callback ran, so arrival order is delivery order.
+	runPosted(t, ch, 2)
+	events := p.State.GetGlobal("events").(*lua.LTable)
+	if events.Len() != 2 {
+		t.Fatalf("expected 2 events, got %d", events.Len())
+	}
+	if events.RawGetInt(1).String() != "out:chunk-one|chunk-two|" {
+		t.Errorf("expected chunk first, got %q", events.RawGetInt(1).String())
+	}
+	if events.RawGetInt(2).String() != "exit:0" {
+		t.Errorf("expected exit last, got %q", events.RawGetInt(2).String())
 	}
 }

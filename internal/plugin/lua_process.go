@@ -42,6 +42,7 @@ var (
 const procTypeName = "ttt.system.proc"
 const procReadChunk = 32 * 1024
 const procWriteQueueSize = 64
+const procCallbackQueueSize = 256
 
 // procWriteMsg is one item in the writer queue. close asks the writer to
 // close stdin after all queued writes have been sent.
@@ -59,6 +60,9 @@ type pluginProc struct {
 	onExit   *lua.LFunction
 
 	writeCh chan procWriteMsg
+	cbCh    chan func()   // callbacks serialized onto the main thread
+	abandon chan struct{} // closed on plugin teardown; releases dispatch waits
+	abOnce  sync.Once
 
 	mu     sync.Mutex
 	closed bool // no more writes accepted
@@ -132,8 +136,11 @@ func sysSpawn(p *Plugin) lua.LGFunction {
 			onStderr: onStderr,
 			onExit:   onExit,
 			writeCh:  make(chan procWriteMsg, procWriteQueueSize),
+			cbCh:     make(chan func(), procCallbackQueueSize),
+			abandon:  make(chan struct{}),
 		}
 		p.registerProc(pp)
+		go pp.dispatchLoop()
 		go pp.writeLoop()
 		go pp.pump(proc.Stdout(), pp.onStdout, "stdout")
 		go pp.pump(proc.Stderr(), pp.onStderr, "stderr")
@@ -146,6 +153,40 @@ func sysSpawn(p *Plugin) lua.LGFunction {
 	}
 }
 
+// dispatchLoop serializes the process's callbacks onto the main thread.
+// PostEvent defers a post to a goroutine when the screen queue is full, so
+// independent posts can overtake each other; waiting for each callback to
+// run before posting the next preserves per-process order — on_exit in
+// particular can never run ahead of streamed chunks that arrived first.
+// The abandon channel (plugin teardown) releases the wait so the loop
+// drains and exits instead of leaking.
+func (pp *pluginProc) dispatchLoop() {
+	for cb := range pp.cbCh {
+		done := make(chan struct{})
+		p := pp.p
+		p.SafePostAsync(&PluginAsyncResult{Plugin: p, Callback: func() {
+			defer close(done)
+			cb()
+		}})
+		select {
+		case <-done:
+		case <-pp.abandon:
+		}
+	}
+}
+
+// post queues a callback in process order; callbacks after reaping are
+// dropped. A full queue applies backpressure to the producing goroutine,
+// which bounds the pipe readers by the plugin's callback rate.
+func (pp *pluginProc) post(cb func()) {
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
+	if pp.reaped {
+		return
+	}
+	pp.cbCh <- cb
+}
+
 // writeLoop drains the write queue in order. A {close} message half-closes
 // stdin; a closed channel (reaping, destroy) just exits.
 func (pp *pluginProc) writeLoop() {
@@ -156,11 +197,11 @@ func (pp *pluginProc) writeLoop() {
 		}
 		if _, err := pp.proc.Write(msg.data); err != nil {
 			p := pp.p
-			p.SafePostAsync(&PluginAsyncResult{Plugin: p, Callback: func() {
+			pp.post(func() {
 				if p.State != nil {
 					p.logError("proc write", err)
 				}
-			}})
+			})
 			// The child is gone or the pipe is broken; further writes
 			// can't succeed, so stop draining.
 			return
@@ -178,14 +219,14 @@ func (pp *pluginProc) pump(r io.Reader, fn *lua.LFunction, name string) {
 		if n > 0 {
 			chunk := string(buf[:n])
 			p := pp.p
-			p.SafePostAsync(&PluginAsyncResult{Plugin: p, Callback: func() {
+			pp.post(func() {
 				if p.State == nil || fn == nil {
 					return
 				}
 				if callErr := p.CallLuaFunc(fn, lua.LString(chunk)); callErr != nil {
 					p.logError("proc "+name+" callback", callErr)
 				}
-			}})
+			})
 		}
 		if err != nil {
 			pp.streamEOF()
@@ -206,10 +247,31 @@ func (pp *pluginProc) streamEOF() {
 	}
 }
 
-// reap waits for the child, reports the exit code, and releases the process
-// from the plugin's tracking set.
+// reap waits for the child, queues the exit callback behind everything the
+// streams already posted, closes the writer and callback queues under the
+// same lock that gates enqueue/post, and releases the process from the
+// plugin's tracking set.
 func (pp *pluginProc) reap() {
 	code, err := pp.proc.Wait()
+
+	p := pp.p
+	var exitCb func()
+	if pp.onExit != nil {
+		result := lua.LNumber(code)
+		var errVal lua.LValue = lua.LNil
+		if err != nil {
+			errVal = lua.LString(err.Error())
+		}
+		onExit := pp.onExit
+		exitCb = func() {
+			if p.State == nil {
+				return
+			}
+			if callErr := p.CallLuaFunc(onExit, result, errVal); callErr != nil {
+				p.logError("proc exit callback", callErr)
+			}
+		}
+	}
 
 	pp.mu.Lock()
 	if pp.reaped {
@@ -219,25 +281,13 @@ func (pp *pluginProc) reap() {
 	pp.reaped = true
 	pp.closed = true
 	close(pp.writeCh)
+	if exitCb != nil {
+		pp.cbCh <- exitCb
+	}
+	close(pp.cbCh)
 	pp.mu.Unlock()
 
-	p := pp.p
 	p.unregisterProc(pp)
-	if pp.onExit != nil {
-		result := lua.LNumber(code)
-		var errVal lua.LValue = lua.LNil
-		if err != nil {
-			errVal = lua.LString(err.Error())
-		}
-		p.SafePostAsync(&PluginAsyncResult{Plugin: p, Callback: func() {
-			if p.State == nil {
-				return
-			}
-			if callErr := p.CallLuaFunc(pp.onExit, result, errVal); callErr != nil {
-				p.logError("proc exit callback", callErr)
-			}
-		}})
-	}
 }
 
 // enqueue appends to the write queue; it fails when the process is closed or
@@ -284,6 +334,7 @@ func (p *Plugin) unregisterProc(pp *pluginProc) {
 // killProcsLocked terminates every spawned process; caller must hold p.mu.
 func (p *Plugin) killProcsLocked() {
 	for pp := range p.procs {
+		pp.abOnce.Do(func() { close(pp.abandon) })
 		pp.proc.Kill()
 	}
 	p.procs = nil
